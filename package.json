@@ -1,0 +1,12 @@
+{
+  "name": "glm-a2ui-card",
+  "version": "1.0.0",
+  "ohos": {
+    "org": "example",
+    "buildTool": "hvigor",
+    "directoryLevel": "project"
+  },
+  "description": "HarmonyOS MVP skeleton for GLM generated A2UI cards.",
+  "license": "UNLICENSED",
+  "dependencies": {}
+}

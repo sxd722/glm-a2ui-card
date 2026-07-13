@@ -1,0 +1,25 @@
+{
+  "forms": [
+    {
+      "name": "a2ui_card",
+      "displayName": "$string:FormAbility_label",
+      "description": "$string:FormAbility_desc",
+      "src": "./ets/widgets/A2uiCardWidget.ets",
+      "uiSyntax": "arkts",
+      "window": {
+        "designWidth": 720,
+        "autoDesignWidth": true
+      },
+      "isDefault": true,
+      "colorMode": "auto",
+      "supportDimensions": [
+        "2*2",
+        "2*4"
+      ],
+      "defaultDimension": "2*2",
+      "updateEnabled": true,
+      "scheduledUpdateTime": "10:30",
+      "updateDuration": 1
+    }
+  ]
+}

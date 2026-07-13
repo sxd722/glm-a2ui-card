@@ -1,0 +1,5 @@
+{
+  "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
+  "apiKey": "replace-with-local-key",
+  "model": "glm-5.2"
+}

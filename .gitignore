@@ -1,0 +1,46 @@
+# Dependencies and build caches
+node_modules/
+oh_modules/
+.hvigor/
+**/build/
+
+# DevEco Studio local state
+.idea/
+.superpowers/
+local.properties
+*.iml
+
+# Local model and service configuration
+glm.local.json
+*.local.json
+.env
+.env.*
+!.env.example
+
+# Signing configuration and key material
+build-profile.json5
+*.p12
+*.p7b
+*.pfx
+*.jks
+*.keystore
+*.pem
+*.key
+*.cer
+*.crt
+keystore.properties
+signing.properties
+
+# HarmonyOS build artifacts
+*.hap
+*.hsp
+*.har
+
+# Local UI automation and layout dumps
+/*-layout.json
+/forge-preview.json
+/runtime-*.json
+
+# OS and editor noise
+.DS_Store
+Thumbs.db

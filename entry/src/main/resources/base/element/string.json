@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "GLM A2UI card entry module"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "GLM A2UI Card entry"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "GLM A2UI Card"
+    },
+    {
+      "name": "FormAbility_label",
+      "value": "A2UI Card"
+    },
+    {
+      "name": "FormAbility_desc",
+      "value": "Desktop card rendered from a Form-safe A2UI subset"
+    }
+  ]
+}
