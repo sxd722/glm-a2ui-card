@@ -13,6 +13,7 @@ local.properties
 # Local model and service configuration
 glm.local.json
 *.local.json
+entry/src/main/ets/config/GlmLocalSecrets.ets
 .env
 .env.*
 !.env.example

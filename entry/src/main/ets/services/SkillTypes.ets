@@ -7,6 +7,11 @@ export interface SkillFieldSpec {
   required: boolean;
 }
 
+export interface SkillInputValue {
+  id: string;
+  value: string;
+}
+
 export interface SkillSpec {
   skillName: string;
   skillId: string;
@@ -61,6 +66,7 @@ export interface SkillSessionState {
   cards: SkillCard[];
   activeCardId: string;
   inputs: TravelInputs;
+  fieldValues: SkillInputValue[];
   toolResults: ToolResult[];
   finalPlan: string;
   progress: number;

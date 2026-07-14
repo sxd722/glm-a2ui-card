@@ -94,11 +94,13 @@ dismiss(slotId: string): void
 
 **约束**：只允许 HTTPS；校验类型、尺寸和大小；记录来源；失败时使用本地资源或无图布局。Runtime 不接受模型直接注入的 URL。
 
-## TODO 7：视觉模型路由
+## 已接入：MVP 视觉模型路由
 
 **职责**：区分 `visionModel`、`designModel` 和 `runtimeModel` 配置。图片导入先检查视觉能力，再生成通用 `SkillManifest`。
 
-**当前行为**：图片保留为本地资源并使用旅行 Manifest 回退；旧旅行图片识别实验仍保留在桌面卡片 Workbench。
+**当前行为**：Forge 图片源优先使用 `GLM-4.6V-Flash` 和通用端点 `https://open.bigmodel.cn/api/paas/v4` 生成真实 `SkillManifest`；遇到明确的 HTTP 429 容量限制时，降级到免费 `GLM-4V-Flash`。随后使用 `glm-5.2` 和 Coding 端点生成 `AppBlueprint`。图片解析或 Blueprint 校验失败时停留在当前阶段并显示错误，不再静默使用旅行模板冒充模型结果。
+
+**仍需后续实现**：将三个模型角色改为用户可配置项，并在请求前查询模型能力；当前 MVP 使用固定的视觉与设计模型组合。
 
 ## TODO 8：组件原生实现
 

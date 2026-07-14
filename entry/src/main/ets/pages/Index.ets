@@ -13,11 +13,12 @@ import {
   normalizeSkillSpec,
   pickFileSystemImageAsDataUrl,
   pickImageAsDataUrl,
+  pickSkillMarkdownFile,
   saveSkillSession,
   skillSessionToCardPreview,
   TRAVEL_TOOL_NAMES
 } from '../services/SkillWorkbench';
-import { AgentTurnResult, SkillCard, SkillCardAction, SkillSessionState, TravelInputs } from '../services/SkillTypes';
+import { AgentTurnResult, SkillCard, SkillCardAction, SkillFieldSpec, SkillSessionState, TravelInputs } from '../services/SkillTypes';
 import { LocalImageAsset, NestedAction, NestedNode, NestedPageSpec, NestedSessionState } from '../services/NestedAppTypes';
 import {
   activeNestedPage,
@@ -33,12 +34,16 @@ import {
   GLM_ALTERNATE_MODEL,
   GLM_CODING_ENDPOINT,
   GLM_DEFAULT_MODEL,
+  GLM_GENERAL_ENDPOINT,
   GLM_LOCAL_API_KEY,
+  GLM_VISION_FALLBACK_MODEL,
+  GLM_VISION_MODEL,
   requestA2uiDslFromGlm,
   requestAgentTurnFromGlm,
   requestAppBlueprintFromGlm,
   requestNestedRuntimeTurnFromGlm,
   requestSkillManifestFromGlm,
+  requestSkillManifestFromGlmImage,
   requestSkillSpecFromGlmImage
 } from '../services/GlmClient';
 import {
@@ -73,12 +78,15 @@ struct Index {
   @State nestedFlow: string = 'landing';
   @State forgeStage: string = 'import';
   @State forgeSourceKind: string = 'repository';
-  @State forgeSourceValue: string = 'https://github.com/seniverse/skills';
+  @State forgeRepositoryUrl: string = 'https://github.com/seniverse/skills';
+  @State forgeSourceValue: string = '';
+  @State forgeSkillFileName: string = '';
   @State forgeSkillName: string = '旅行规划助手';
   @State forgeSkillGoal: string = '生成一套可交互的旅行规划应用';
   @State seniverseApiKey: string = '';
   @State forgeDraft: ForgeDraft = createForgeDraft(createSkillSource('repository', 'https://github.com/seniverse/skills', []));
   @State forgeManifestJson: string = '';
+  @State forgeVisionJson: string = '';
   @State forgeBlueprintJson: string = '';
   @State nestedSession: NestedSessionState = createNestedSession(defaultTravelNestedApp());
   @State nestedDslText: string = '';
@@ -320,22 +328,30 @@ struct Index {
       Row({ space: 8 }) {
         Button('仓库链接').layoutWeight(1)
           .backgroundColor(this.forgeSourceKind === 'repository' ? '#6D7E73' : '#B7C1BA')
-          .onClick(() => { this.forgeSourceKind = 'repository'; })
-        Button('文字描述').layoutWeight(1)
+          .onClick(() => { this.selectForgeSourceKind('repository'); })
+        Button('Skill.md').layoutWeight(1)
           .backgroundColor(this.forgeSourceKind === 'text' ? '#6D7E73' : '#B7C1BA')
-          .onClick(() => { this.forgeSourceKind = 'text'; })
+          .onClick(() => { this.selectForgeSourceKind('text'); })
         Button('图片').layoutWeight(1)
           .backgroundColor(this.forgeSourceKind === 'image' ? '#6D7E73' : '#B7C1BA')
-          .onClick(() => { this.forgeSourceKind = 'image'; })
+          .onClick(() => { this.selectForgeSourceKind('image'); })
       }.width('100%')
       if (this.forgeSourceKind === 'repository') {
-        TextInput({ text: this.forgeSourceValue, placeholder: 'https://github.com/.../skills' })
+        TextInput({ text: this.forgeRepositoryUrl, placeholder: 'https://github.com/.../skills' })
           .height(44).backgroundColor('#FFFFFFAA')
-          .onChange((value: string) => { this.forgeSourceValue = value; })
+          .onChange((value: string) => { this.forgeRepositoryUrl = value; })
       } else if (this.forgeSourceKind === 'text') {
-        TextArea({ text: this.forgeSourceValue, placeholder: '描述 Skill 的目标、输入、工具和输出' })
-          .height(100).backgroundColor('#FFFFFFAA')
-          .onChange((value: string) => { this.forgeSourceValue = value; })
+        Button(this.forgeSkillFileName.length > 0 ? '重新选择 skill.md' : '从文件系统选择 skill.md')
+          .width('100%')
+          .backgroundColor('#7A8A99')
+          .onClick(async () => { await this.pickForgeSkillMarkdown(); })
+        Text(this.forgeSkillFileName.length > 0 ? '已选择：' + this.forgeSkillFileName : '尚未选择 skill.md')
+          .fontSize(12).fontColor('#5D6C63').width('100%')
+        if (this.forgeSourceValue.length > 0 && this.forgeSkillFileName.length > 0) {
+          this.ForgeArtifactPanel('Skill.md 原文', this.forgeSourceValue)
+        }
+        Text('Skill.md 分析：' + GLM_DEFAULT_MODEL + ' · coding endpoint')
+          .fontSize(11).fontColor('#756E66').width('100%')
       } else {
         Row({ space: 8 }) {
           Button('从相册选择').layoutWeight(1).onClick(async () => { await this.pickForgeImage(false); })
@@ -343,9 +359,26 @@ struct Index {
         }.width('100%')
         Text('已选 Skill 图片 / 素材 ' + this.nestedSession.assets.length.toString() + ' 张')
           .fontSize(12).fontColor('#5D6C63')
+        Text('图片解析：' + GLM_VISION_MODEL + ' · 拥塞降级：' + GLM_VISION_FALLBACK_MODEL +
+          ' · UI 设计：' + GLM_DEFAULT_MODEL)
+          .fontSize(11).fontColor('#756E66').width('100%')
       }
-      Text('仓库导入当前使用受控本地识别；深度读取由 RepositoryImporter 后续接入。')
-        .fontSize(11).fontColor('#756E66').width('100%')
+      TextInput({ text: this.apiKey, placeholder: 'GLM API Key（分析前必填）' })
+        .height(44).type(InputType.Password).backgroundColor('#FFFFFFAA')
+        .onChange((value: string) => { this.apiKey = value; })
+      if (this.nestedSession.errorMessage.length > 0) {
+        Text(this.nestedSession.errorMessage).fontSize(12).fontColor('#9A574B').width('100%')
+      }
+      if (this.forgeVisionJson.length > 0) {
+        this.ForgeArtifactPanel('视觉模型原始输出', this.forgeVisionJson)
+      }
+      if (this.forgeManifestJson.length > 0) {
+        this.ForgeArtifactPanel('GLM-5.2 SkillManifest 原始输出', this.forgeManifestJson)
+      }
+      if (this.forgeSourceKind === 'repository') {
+        Text('仓库链接会交给 glm-5.2 分析；仓库内容深度抓取由 RepositoryImporter 后续接入。')
+          .fontSize(11).fontColor('#756E66').width('100%')
+      }
       Row({ space: 8 }) {
         Button('返回').layoutWeight(1).backgroundColor('#9AADA0')
           .onClick(() => { this.nestedFlow = 'landing'; })
@@ -371,6 +404,10 @@ struct Index {
             .fontColor(tool.implemented ? '#47705A' : '#9A6D5F')
         }.padding(10).width('100%').backgroundColor('#FFFFFF88').borderRadius(10)
       })
+      if (this.forgeVisionJson.length > 0) {
+        this.ForgeArtifactPanel('视觉模型原始输出', this.forgeVisionJson)
+      }
+      this.ForgeArtifactPanel('GLM-5.2 SkillManifest', this.forgeManifestJson)
       Text(this.forgeDraft.trace).fontSize(12).fontColor('#6B655E').width('100%')
       Row({ space: 8 }) {
         Button('上一步').layoutWeight(1).backgroundColor('#9AADA0')
@@ -395,6 +432,18 @@ struct Index {
       }
       Text('MVP 骨架不持久化密钥。CredentialVault 将使用 HUKS 加密并只向 Tool Gateway 返回引用。')
         .fontSize(11).fontColor('#8A675C').width('100%')
+      Text('Skill 图片使用 ' + GLM_VISION_MODEL + '，UI Blueprint 使用 ' + GLM_DEFAULT_MODEL + '。')
+        .fontSize(11).fontColor('#756E66').width('100%')
+      this.ForgeArtifactPanel('当前 SkillManifest', this.forgeManifestJson)
+      if (this.forgeBlueprintJson.length > 0) {
+        this.ForgeArtifactPanel('GLM-5.2 AppBlueprint 原始输出', this.forgeBlueprintJson)
+      }
+      if (this.nestedDslText.length > 0) {
+        this.ForgeArtifactPanel('最终 Nested App DSL', this.nestedDslText)
+      }
+      if (this.nestedSession.errorMessage.length > 0) {
+        Text(this.nestedSession.errorMessage).fontSize(12).fontColor('#9A574B').width('100%')
+      }
       Row({ space: 8 }) {
         Button('上一步').layoutWeight(1).backgroundColor('#9AADA0')
           .onClick(() => { this.forgeStage = 'analyze'; })
@@ -416,6 +465,9 @@ struct Index {
           .fontSize(12).fontColor('#5B675F').padding(10).width('100%')
           .backgroundColor('#FFFFFF88').borderRadius(10)
       })
+      this.ForgeArtifactPanel('SkillManifest', this.forgeManifestJson)
+      this.ForgeArtifactPanel('GLM-5.2 AppBlueprint', this.forgeBlueprintJson)
+      this.ForgeArtifactPanel('最终 Nested App DSL', this.nestedDslText)
       Text(this.forgeDraft.trace).fontSize(12).fontColor('#6B655E').width('100%')
       Row({ space: 8 }) {
         Button('调整设置').layoutWeight(1).backgroundColor('#9AADA0')
@@ -426,6 +478,30 @@ struct Index {
           .onClick(async () => { await this.installForgePreview(); })
       }.width('100%')
     }.width('100%')
+  }
+
+  @Builder
+  ForgeArtifactPanel(title: string, content: string) {
+    Column({ space: 6 }) {
+      Text(title)
+        .fontSize(12)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#45534C')
+        .width('100%')
+      Scroll() {
+        Text(content.length > 0 ? content : '尚无产物')
+          .fontSize(10)
+          .fontColor('#343B37')
+          .width('100%')
+          .padding(10)
+      }
+      .height(168)
+      .width('100%')
+      .scrollBar(BarState.Auto)
+      .backgroundColor('#FFFFFFAA')
+      .borderRadius(8)
+    }
+    .width('100%')
   }
 
   @Builder
@@ -518,8 +594,9 @@ struct Index {
           .borderRadius(12)
       }
 
+      Text('当前 Nested App DSL').fontSize(13).fontWeight(FontWeight.Medium).width('100%')
       TextArea({ text: this.nestedDslText, placeholder: 'NestedAppSpec JSON（可查看或粘贴 GLM 结果）' })
-        .height(82)
+        .height(180)
         .fontSize(10)
         .onChange((value: string) => {
           this.nestedDslText = value;
@@ -774,12 +851,21 @@ struct Index {
       Button('应用 SkillSpec JSON')
         .width('100%')
         .onClick(async () => {
-          this.skillSession = createSkillSession(normalizeSkillSpec(this.skillRawJson));
-          await saveSkillSession(this.context, this.skillSession);
-          this.agentTrace = 'SkillSpec 已编译为卡片集合';
+          try {
+            this.skillSession = createSkillSession(normalizeSkillSpec(this.skillRawJson));
+            await saveSkillSession(this.context, this.skillSession);
+            this.agentTrace = 'SkillSpec 已编译为 ' + this.skillSession.skillSpec.skillId + ' 交互界面';
+          } catch (error) {
+            let err: Error = error as Error;
+            this.agentTrace = err.message;
+          }
         })
 
-      this.SkillInputEditor()
+      if (this.skillSession.skillSpec.skillId === 'TRAVEL_PLANNER_V1') {
+        this.SkillInputEditor()
+      } else {
+        this.GenericSkillInputEditor()
+      }
       this.SkillCardRenderer()
 
       Row({ space: 8 }) {
@@ -883,6 +969,39 @@ struct Index {
           })
       }
       .width('100%')
+    }
+    .width('100%')
+    .padding(12)
+    .borderRadius(8)
+    .backgroundColor('#F9FAFB')
+  }
+
+  @Builder
+  GenericSkillInputEditor() {
+    Column({ space: 8 }) {
+      Text(this.skillSession.skillSpec.skillName + ' 输入')
+        .fontSize(16)
+        .fontWeight(FontWeight.Bold)
+        .width('100%')
+
+      if (this.skillSession.skillSpec.inputFields.length === 0) {
+        Text('该 Skill 不需要用户输入。')
+          .fontSize(13)
+          .fontColor('#4B5563')
+          .width('100%')
+      }
+
+      ForEach(this.skillSession.skillSpec.inputFields, (field: SkillFieldSpec) => {
+        Text(field.label + (field.required ? ' *' : ''))
+          .fontSize(12)
+          .fontColor('#45534C')
+          .width('100%')
+        TextInput({ text: this.genericSkillInputValue(field.id), placeholder: field.placeholder })
+          .height(40)
+          .onChange((value: string) => {
+            this.updateGenericSkillInput(field.id, value);
+          })
+      })
     }
     .width('100%')
     .padding(12)
@@ -1017,9 +1136,9 @@ struct Index {
       return;
     }
     let config: GlmLocalConfig = {
-      baseUrl: this.baseUrl,
+      baseUrl: GLM_GENERAL_ENDPOINT,
       apiKey: this.apiKey,
-      model: this.model
+      model: GLM_VISION_MODEL
     };
     try {
       this.agentTrace = '正在选择图片...';
@@ -1034,6 +1153,34 @@ struct Index {
       let err: BusinessError = error as BusinessError;
       this.agentTrace = '图片识别失败: ' + err.message + '。如果当前模型不支持图片，请切换 visionModel / visionEndpoint，或先加载示例验证链路。';
     }
+  }
+
+  genericSkillInputValue(fieldId: string): string {
+    if (!Array.isArray(this.skillSession.fieldValues)) {
+      return '';
+    }
+    for (let i: number = 0; i < this.skillSession.fieldValues.length; i++) {
+      if (this.skillSession.fieldValues[i].id === fieldId) {
+        return this.skillSession.fieldValues[i].value;
+      }
+    }
+    return '';
+  }
+
+  updateGenericSkillInput(fieldId: string, value: string): void {
+    let next: SkillSessionState = JSON.parse(JSON.stringify(this.skillSession)) as SkillSessionState;
+    if (!Array.isArray(next.fieldValues)) {
+      next.fieldValues = [];
+    }
+    for (let i: number = 0; i < next.fieldValues.length; i++) {
+      if (next.fieldValues[i].id === fieldId) {
+        next.fieldValues[i].value = value;
+        this.skillSession = next;
+        return;
+      }
+    }
+    next.fieldValues.push({ id: fieldId, value: value });
+    this.skillSession = next;
   }
 
   async runSkillAction(actionId: string): Promise<void> {
@@ -1157,29 +1304,72 @@ struct Index {
 
   async analyzeForgeSkill(): Promise<void> {
     let assetIds: string[] = this.forgeAssetIds();
-    let sourceValue: string = this.forgeSourceValue;
+    let sourceValue: string = this.forgeSourceKind === 'repository' ? this.forgeRepositoryUrl : this.forgeSourceValue;
+    if (this.apiKey.trim().length === 0) {
+      this.nestedSession.errorMessage = 'Skill 分析必须调用 GLM-5.2，请先输入 GLM API Key。';
+      return;
+    }
+    if (this.forgeSourceKind === 'text') {
+      if (this.forgeSkillFileName.length === 0 || sourceValue.trim().length === 0) {
+        this.nestedSession.errorMessage = '请先从文件系统选择一个非空的 skill.md 文件。';
+        return;
+      }
+    }
+    if (this.forgeSourceKind === 'repository' && sourceValue.trim().length === 0) {
+      this.nestedSession.errorMessage = '请输入 Skill 仓库链接。';
+      return;
+    }
     if (this.forgeSourceKind === 'image') {
       sourceValue = '用户选择的 Skill 图片，共 ' + assetIds.length.toString() + ' 张。';
+      if (assetIds.length === 0) {
+        this.nestedSession.errorMessage = '请先从相册或文件系统选择一张 Skill 图片。';
+        return;
+      }
     }
+    this.nestedSession.errorMessage = '';
+    this.forgeManifestJson = '';
+    this.forgeVisionJson = '';
+    this.forgeBlueprintJson = '';
+    this.nestedDslText = '';
     let source: SkillSource = createSkillSource(this.forgeSourceKind, sourceValue, assetIds);
     let draft: ForgeDraft = createForgeDraft(source);
-    let trace: string = '已使用本地通用分析器生成 SkillManifest 回退结果。';
-    if (this.apiKey.length > 0 && source.kind !== 'image') {
-      let config: GlmLocalConfig = { baseUrl: this.baseUrl, apiKey: this.apiKey, model: this.model };
-      try {
-        let raw: string = await requestSkillManifestFromGlm(source, config);
-        this.forgeManifestJson = raw;
-        draft = updateDraftManifest(draft, normalizeSkillManifest(raw, draft.manifest), 'GLM 已生成 SkillManifest。');
-        trace = draft.trace;
-      } catch (error) {
-        let err: BusinessError = error as BusinessError;
-        trace = 'GLM 分析失败，已保留本地回退 Manifest：' + err.message;
+    let trace: string = '';
+    try {
+      let manifestSource: SkillSource = source;
+      if (source.kind === 'image') {
+        let imageDataUrl: string = this.forgePrimaryImageDataUrl();
+        let visionConfig: GlmLocalConfig = {
+          baseUrl: GLM_GENERAL_ENDPOINT,
+          apiKey: this.apiKey,
+          model: GLM_VISION_MODEL
+        };
+        this.statusText = 'GLM-4.6V-Flash 正在解析 Skill 图片...';
+        this.forgeVisionJson = await this.requestForgeImageManifest(imageDataUrl, assetIds, visionConfig);
+        manifestSource = createSkillSource('text', this.forgeVisionJson, assetIds);
       }
-    } else if (source.kind === 'image') {
-      // TODO(MVP-next): Route image sources through a configurable visionModel and convert the result to SkillManifest.
-      trace = '图片已保留；视觉模型路由尚未接入，当前使用本地旅行 SkillManifest。';
+
+      this.statusText = 'glm-5.2 正在生成 SkillManifest...';
+      let glmConfig: GlmLocalConfig = {
+        baseUrl: GLM_CODING_ENDPOINT,
+        apiKey: this.apiKey,
+        model: GLM_DEFAULT_MODEL
+      };
+      this.forgeManifestJson = await requestSkillManifestFromGlm(manifestSource, glmConfig);
+      let manifest = normalizeSkillManifest(this.forgeManifestJson, draft.manifest);
+      if (manifest === draft.manifest) {
+        throw new Error('glm-5.2 返回内容未通过 SkillManifest 校验');
+      }
+      trace = source.kind === 'image' ?
+        '视觉模型完成图片识别，glm-5.2 已生成并校验 SkillManifest。' :
+        'glm-5.2 已根据 ' + (source.kind === 'text' ? 'skill.md' : '仓库来源') + ' 生成并校验 SkillManifest。';
+      draft = updateDraftManifest(draft, manifest, trace);
+      this.statusText = 'SkillManifest 生成完成：' + manifest.skillName;
+    } catch (error) {
+      let err: BusinessError = error as BusinessError;
+      this.nestedSession.errorMessage = 'Skill 分析失败：' + err.message;
+      this.statusText = '分析已终止；原始产物已保留，不会使用本地旅行模板。';
+      return;
     }
-    draft = updateDraftManifest(draft, draft.manifest, trace);
     this.forgeDraft = draft;
     this.forgeSkillName = draft.manifest.skillName;
     this.forgeSkillGoal = draft.manifest.description;
@@ -1193,24 +1383,44 @@ struct Index {
 
   async prepareForgePreview(): Promise<void> {
     let fallback: AppBlueprint = localBlueprintForManifest(this.forgeDraft.manifest);
-    let blueprint: AppBlueprint = fallback;
-    let trace: string = '已生成本地可运行 Blueprint 预览。';
-    if (this.apiKey.length > 0) {
-      let config: GlmLocalConfig = { baseUrl: this.baseUrl, apiKey: this.apiKey, model: this.model };
-      try {
-        let raw: string = await requestAppBlueprintFromGlm(this.forgeDraft.manifest, this.forgeAssetIds(), config);
-        this.forgeBlueprintJson = raw;
-        blueprint = normalizeAppBlueprint(raw, fallback);
-        trace = blueprint === fallback ? 'GLM Blueprint 未通过校验，已使用本地回退预览。' : 'GLM Blueprint 已通过骨架校验。';
-      } catch (error) {
-        let err: BusinessError = error as BusinessError;
-        trace = 'GLM 设计失败，已使用本地回退 Blueprint：' + err.message;
-      }
+    let trace: string = '';
+    if (this.apiKey.trim().length === 0) {
+      this.nestedSession.errorMessage = '生成 Nested App UI 需要 GLM API Key。';
+      this.forgeStage = 'setup';
+      return;
     }
+    this.forgeBlueprintJson = '';
+    this.nestedDslText = '';
+    let config: GlmLocalConfig = {
+      baseUrl: GLM_CODING_ENDPOINT,
+      apiKey: this.apiKey,
+      model: GLM_DEFAULT_MODEL
+    };
+    let blueprint: AppBlueprint;
+    try {
+      this.statusText = 'glm-5.2 正在根据 SkillManifest 设计 Nested App...';
+      this.forgeBlueprintJson = await requestAppBlueprintFromGlm(this.forgeDraft.manifest,
+        this.forgeAssetIds(), config);
+      blueprint = normalizeAppBlueprint(this.forgeBlueprintJson, fallback);
+      if (blueprint === fallback) {
+        throw new Error('glm-5.2 返回内容未通过 AppBlueprint/NestedAppSpec 校验');
+      }
+      trace = 'glm-5.2 已生成并通过校验的 AppBlueprint。';
+    } catch (error) {
+      let err: BusinessError = error as BusinessError;
+      trace = 'UI 设计失败：' + err.message;
+      this.forgeDraft = updateDraftManifest(this.forgeDraft, this.forgeDraft.manifest, trace);
+      this.nestedSession.errorMessage = trace;
+      this.statusText = 'UI 生成已终止；原始产物已保留，不会加载本地旅行模板。';
+      this.forgeStage = 'setup';
+      return;
+    }
+    this.nestedSession.errorMessage = '';
     this.forgeDraft = updateDraftBlueprint(this.forgeDraft, blueprint, trace);
     this.nestedDslText = JSON.stringify(compileBlueprint(blueprint));
     this.forgeStage = 'preview';
     try {
+      this.statusText = 'Nested App UI 已生成，可确认后创建应用。';
       await saveForgeDraft(this.context, this.forgeDraft);
     } catch (error) {
       this.forgeDraft.trace = this.forgeDraft.trace + ' 草稿持久化失败，但可继续创建。';
@@ -1239,12 +1449,38 @@ struct Index {
     return ids;
   }
 
+  forgePrimaryImageDataUrl(): string {
+    if (this.nestedSession.assets.length === 0) {
+      return '';
+    }
+    return this.nestedSession.assets[0].dataUrl;
+  }
+
+  async requestForgeImageManifest(imageDataUrl: string, assetIds: string[],
+    primaryConfig: GlmLocalConfig): Promise<string> {
+    try {
+      return await requestSkillManifestFromGlmImage(imageDataUrl, assetIds, primaryConfig);
+    } catch (error) {
+      let err: BusinessError = error as BusinessError;
+      if (err.message.indexOf('GLM HTTP 429') < 0) {
+        throw new Error(err.message);
+      }
+      this.statusText = GLM_VISION_MODEL + ' 当前拥塞，正在切换免费视觉降级模型 ' + GLM_VISION_FALLBACK_MODEL + '...';
+      let fallbackConfig: GlmLocalConfig = {
+        baseUrl: GLM_GENERAL_ENDPOINT,
+        apiKey: this.apiKey,
+        model: GLM_VISION_FALLBACK_MODEL
+      };
+      return requestSkillManifestFromGlmImage(imageDataUrl, assetIds, fallbackConfig);
+    }
+  }
+
   async generateNestedAppWithGlm(): Promise<void> {
     if (this.apiKey.length === 0) {
       this.nestedSession.agentTrace = '缺少 API key，已保留当前本地 Nested App。';
       return;
     }
-    let config: GlmLocalConfig = { baseUrl: this.baseUrl, apiKey: this.apiKey, model: this.model };
+    let config: GlmLocalConfig = { baseUrl: GLM_CODING_ENDPOINT, apiKey: this.apiKey, model: GLM_DEFAULT_MODEL };
     try {
       this.nestedSession.agentTrace = 'GLM 正在重新设计受控 AppBlueprint...';
       let raw: string = await requestAppBlueprintFromGlm(this.forgeDraft.manifest, this.forgeAssetIds(), config);
@@ -1278,7 +1514,7 @@ struct Index {
     let shouldInvokeAgent: boolean = current.kind === 'invokeAgent' || current.handling === 'agent' ||
       current.handling === 'localThenAgent';
     if (shouldInvokeAgent && this.apiKey.length > 0) {
-      let config: GlmLocalConfig = { baseUrl: this.baseUrl, apiKey: this.apiKey, model: this.model };
+      let config: GlmLocalConfig = { baseUrl: GLM_CODING_ENDPOINT, apiKey: this.apiKey, model: GLM_DEFAULT_MODEL };
       try {
         if (current.handling === 'localThenAgent' && current.kind !== 'invokeAgent') {
           this.nestedSession = reduceNestedAction(this.nestedSession, current);
@@ -1316,10 +1552,43 @@ struct Index {
       let dataUrl: string = useFileSystem ? await pickFileSystemImageAsDataUrl(this.context) : await pickImageAsDataUrl();
       let slot: string = this.nestedSession.assets.length === 0 ? 'cover' : 'gallery-' + this.nestedSession.assets.length.toString();
       this.nestedSession = addNestedAsset(this.nestedSession, useFileSystem ? '文件系统图片' : '相册图片', dataUrl, slot);
+      this.clearForgeArtifacts();
+      this.nestedSession.errorMessage = '';
+      this.statusText = 'Skill 图片已载入，可调用 GLM-4.6V-Flash 分析。';
     } catch (error) {
       let err: BusinessError = error as BusinessError;
       this.nestedSession.errorMessage = '素材选择失败：' + err.message;
     }
+  }
+
+  async pickForgeSkillMarkdown(): Promise<void> {
+    try {
+      let selected = await pickSkillMarkdownFile(this.context);
+      this.forgeSourceKind = 'text';
+      this.forgeSkillFileName = selected.displayName;
+      this.forgeSourceValue = selected.content;
+      this.clearForgeArtifacts();
+      this.nestedSession.errorMessage = '';
+      this.statusText = 'Skill.md 已载入，可调用 glm-5.2 分析。';
+    } catch (error) {
+      let err: BusinessError = error as BusinessError;
+      this.nestedSession.errorMessage = 'Skill.md 选择失败：' + err.message;
+    }
+  }
+
+  selectForgeSourceKind(kind: string): void {
+    if (this.forgeSourceKind !== kind) {
+      this.forgeSourceKind = kind;
+      this.clearForgeArtifacts();
+      this.nestedSession.errorMessage = '';
+    }
+  }
+
+  clearForgeArtifacts(): void {
+    this.forgeManifestJson = '';
+    this.forgeVisionJson = '';
+    this.forgeBlueprintJson = '';
+    this.nestedDslText = '';
   }
 
   async finishForge(): Promise<void> {
