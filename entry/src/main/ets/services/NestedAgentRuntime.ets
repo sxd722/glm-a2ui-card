@@ -218,14 +218,14 @@ function errorTurn(message: string): RuntimeAgentTurnResult {
 function collectDynamicSlotIds(session: NestedSessionState): string[] {
   let ids: string[] = [];
   for (let i = 0; i < session.app.pages.length; i++) {
-    for (let j = 0; j < session.app.pages[i].nodes.length; j++) {
-      let node: NestedNode = session.app.pages[i].nodes[j];
-      if (node.kind === 'dynamicSlot') {
-        ids.push(node.id);
-      }
-    }
+    collectDynamicSlots(session.app.pages[i].root, ids);
   }
   return ids;
+}
+
+function collectDynamicSlots(node: NestedNode, ids: string[]): void {
+  if (node.type === 'DynamicSlot') { ids.push(node.id); }
+  for (let i: number = 0; i < node.children.length; i++) { collectDynamicSlots(node.children[i], ids); }
 }
 
 function implementedTools(tools: ToolContract[]): ToolContract[] {

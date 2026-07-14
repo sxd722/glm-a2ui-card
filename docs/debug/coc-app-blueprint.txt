@@ -1,0 +1,230 @@
+{
+  "schemaVersion": "1.0",
+  "appId": "COC_KEEPER_V1",
+  "skillId": "COC_KEEPER_V1",
+  "title": "COC 团主助手",
+  "summary": "专为克苏鲁的呼唤团主设计的工具集，包含NPC管理、消息广播及战斗指令控制。",
+  "homePattern": "heroMedia",
+  "palette": {
+    "primary": "#0f172a",
+    "secondary": "#1e293b",
+    "surface": "#f1f5f9",
+    "text": "#334155",
+    "border": "#cbd5e1",
+    "accent": "#3b82f6"
+  },
+  "runtimePrompt": "Act as a tactical and professional CoC Keeper Assistant. Help the Keeper manage party details and game logic.",
+  "dynamicSlots": [
+    {
+      "id": "npc_id",
+      "label": "NPC ID",
+      "kind": "string"
+    },
+    {
+      "id": "message_content",
+      "label": "Message Content",
+      "kind": "string"
+    },
+    {
+      "id": "battle_command",
+      "label": "Battle Command",
+      "kind": "string"
+    }
+  ],
+  "componentRecipes": {},
+  "nestedApp": {
+    "appId": "COC_KEEPER_V1",
+    "title": "COC 团主助手",
+    "subtitle": "工具与控制面板",
+    "initialPageId": "home_page",
+    "pages": [
+      {
+        "id": "home_page",
+        "title": "主控台",
+        "subtitle": "选择功能模块",
+        "nodes": [
+          {
+            "id": "home_hero",
+            "kind": "heroMedia",
+            "title": "Welcome",
+            "text": "COC Keeper Agent",
+            "assetId": "cover"
+          },
+          {
+            "id": "home_header",
+            "kind": "sectionHeader",
+            "title": "功能导航",
+            "text": "管理您的团队与战况",
+            "tone": "professional"
+          },
+          {
+            "id": "home_actions",
+            "kind": "actionBar",
+            "title": "Quick Actions",
+            "actions": [
+              {
+                "id": "action_npc",
+                "label": "管理 NPC",
+                "kind": "navigate",
+                "targetPageId": "npc_manager_page",
+                "payload": "{\"type\":\"navigation\",\"target\":\"npc_manager\"}",
+                "handling": "local"
+              },
+              {
+                "id": "action_msg",
+                "label": "发送消息",
+                "kind": "navigate",
+                "targetPageId": "message_sender_page",
+                "payload": "{\"type\":\"navigation\",\"target\":\"message_sender\"}",
+                "handling": "local"
+              },
+              {
+                "id": "action_battle",
+                "label": "战斗指令",
+                "kind": "navigate",
+                "targetPageId": "battle_manager_page",
+                "payload": "{\"type\":\"navigation\",\"target\":\"battle_manager\"}",
+                "handling": "local"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "npc_manager_page",
+        "title": "NPC 管理",
+        "subtitle": "创建或查询游戏角色",
+        "nodes": [
+          {
+            "id": "npc_header",
+            "kind": "sectionHeader",
+            "title": "NPC 操作",
+            "text": "输入ID以检索或生成实体",
+            "tone": "professional"
+          },
+          {
+            "id": "npc_input",
+            "kind": "formField",
+            "title": "NPC Identification",
+            "text": "请输入NPC的编号",
+            "binding": "npc_id"
+          },
+          {
+            "id": "npc_action",
+            "kind": "actionBar",
+            "title": "Execute",
+            "actions": [
+              {
+                "id": "npc_submit",
+                "label": "检索 / 创建",
+                "kind": "invokeAgent",
+                "targetPageId": "home_page",
+                "payload": "{\"action\":\"npc_query\",\"npc_id\":\"@binding:npc_id\"}",
+                "handling": "localThenAgent"
+              },
+              {
+                "id": "npc_back",
+                "label": "返回",
+                "kind": "back",
+                "handling": "local"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "message_sender_page",
+        "title": "消息广播",
+        "subtitle": "向玩家发送重要通知",
+        "nodes": [
+          {
+            "id": "msg_header",
+            "kind": "sectionHeader",
+            "title": "广播消息",
+            "text": "仅限紧急通知或全团公告",
+            "tone": "serious"
+          },
+          {
+            "id": "msg_input",
+            "kind": "formField",
+            "title": "消息内容",
+            "text": "在此输入消息文本",
+            "binding": "message_content"
+          },
+          {
+            "id": "msg_action",
+            "kind": "actionBar",
+            "title": "发送",
+            "actions": [
+              {
+                "id": "msg_submit",
+                "label": "发送广播",
+                "kind": "invokeAgent",
+                "targetPageId": "home_page",
+                "payload": "{\"action\":\"send_message\",\"content\":\"@binding:message_content\"}",
+                "handling": "localThenAgent"
+              },
+              {
+                "id": "msg_back",
+                "label": "取消",
+                "kind": "back",
+                "handling": "local"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "battle_manager_page",
+        "title": "战斗指令",
+        "subtitle": "实时控制战况",
+        "nodes": [
+          {
+            "id": "battle_header",
+            "kind": "sectionHeader",
+            "title": "指令集",
+            "text": "为团队下达战术指令",
+            "tone": "urgent"
+          },
+          {
+            "id": "battle_choices",
+            "kind": "choiceChips",
+            "title": "行动选择",
+            "items": [
+              {
+                "id": "choice_attack",
+                "label": "攻击",
+                "text": "执行攻击行动"
+              },
+              {
+                "id": "choice_defend",
+                "label": "防御",
+                "text": "降低受到的伤害"
+              },
+              {
+                "id": "choice_flee",
+                "label": "撤退",
+                "text": "尝试脱离战场"
+              }
+            ]
+          },
+          {
+            "id": "battle_action",
+            "kind": "actionBar",
+            "title": "确认",
+            "actions": [
+              {
+                "id": "battle_submit",
+                "label": "执行指令",
+                "kind": "invokeAgent",
+                "targetPageId": "home_page",
+                "payload": "{\"action\":\"battle_command\",\"command\":\"@binding:battle_command\"}",
+                "handling": "localThenAgent"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

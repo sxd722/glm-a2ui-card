@@ -10,7 +10,7 @@ export type HdcDebugAction = 'setForgeSource' | 'runForgeAnalyze' | 'runForgePre
   'installForgePreview' | 'runForgePipeline' | 'setSkillFields' | 'runSkillAction' |
   'setNestedFields' | 'runNestedAction' | 'loadForgeImageFromDevice' | 'loadForgeImageDataUrl' |
   'resetForgeImageTransfer' | 'appendForgeImageChunk' | 'finishForgeImageTransfer' |
-  'loadTravelDemo' | 'resetWorkbench';
+  'exportForgeArtifacts' | 'exportCurrentArtifacts' | 'loadTravelDemo' | 'resetWorkbench';
 
 export interface HdcDebugCommand {
   requestId: string;
@@ -45,6 +45,13 @@ export interface HdcDebugResult {
   snapshot: HdcDebugSnapshot;
 }
 
+export interface HdcDebugArtifactExport {
+  requestId: string;
+  manifest: string;
+  blueprint: string;
+  dsl: string;
+}
+
 export interface HdcDebugIngestResult {
   command: HdcDebugCommand | undefined;
   error: string;
@@ -70,6 +77,7 @@ const EMPTY_SNAPSHOT: HdcDebugSnapshot = {
 let pendingCommands: HdcDebugCommand[] = [];
 let results: HdcDebugResult[] = [];
 let seenRequestIds: string[] = [];
+let artifactExports: HdcDebugArtifactExport[] = [];
 
 export function ingestHdcDebugWant(want: Want): HdcDebugIngestResult {
   let requestId: string = readString(want.parameters, 'debugRequestId');
@@ -137,6 +145,14 @@ export function recordHdcDebugResult(result: HdcDebugResult): void {
   }
 }
 
+export function recordHdcDebugArtifactExport(requestId: string, manifest: string, blueprint: string,
+  dsl: string = ''): void {
+  artifactExports.push({ requestId: requestId, manifest: manifest, blueprint: blueprint, dsl: dsl });
+  if (artifactExports.length > MAX_RESULT_LENGTH) {
+    artifactExports.shift();
+  }
+}
+
 export function latestHdcDebugResult(): HdcDebugResult | undefined {
   if (results.length === 0) {
     return undefined;
@@ -149,6 +165,9 @@ export function hdcDebugDumpLines(): string[] {
     ' results=' + results.length.toString()];
   for (let i: number = 0; i < results.length; i++) {
     lines.push('HDC_DEBUG_RESULT ' + JSON.stringify(results[i]));
+  }
+  for (let i: number = 0; i < artifactExports.length; i++) {
+    lines.push('HDC_DEBUG_ARTIFACT ' + JSON.stringify(artifactExports[i]));
   }
   return lines;
 }
@@ -201,5 +220,6 @@ function isHdcDebugAction(value: string): boolean {
     value === 'runSkillAction' || value === 'setNestedFields' || value === 'runNestedAction' ||
     value === 'loadForgeImageFromDevice' || value === 'loadForgeImageDataUrl' ||
     value === 'resetForgeImageTransfer' || value === 'appendForgeImageChunk' ||
-    value === 'finishForgeImageTransfer' || value === 'loadTravelDemo' || value === 'resetWorkbench';
+    value === 'finishForgeImageTransfer' || value === 'exportForgeArtifacts' || value === 'exportCurrentArtifacts' ||
+    value === 'loadTravelDemo' || value === 'resetWorkbench';
 }

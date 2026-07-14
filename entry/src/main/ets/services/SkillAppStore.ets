@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
-import { ForgeDraft, InstalledNestedApp, RuntimeSession } from './SkillAppTypes';
+import { ForgeDraft, InstalledSkillApp, RuntimeSession } from './SkillAppTypes';
 
 const STORE_NAME: string = 'skillAppMvpStore';
 const FORGE_DRAFT_KEY: string = 'forgeDraft';
@@ -25,18 +25,18 @@ export function readForgeDraft(context: common.Context): ForgeDraft | undefined 
   return undefined;
 }
 
-export async function saveInstalledNestedApp(context: common.Context, app: InstalledNestedApp): Promise<void> {
+export async function saveInstalledNestedApp(context: common.Context, app: InstalledSkillApp): Promise<void> {
   let store: preferences.Preferences = preferences.getPreferencesSync(context, { name: STORE_NAME });
   store.putSync(INSTALLED_APP_KEY, JSON.stringify(app));
   await store.flush();
 }
 
-export function readInstalledNestedApp(context: common.Context): InstalledNestedApp | undefined {
+export function readInstalledNestedApp(context: common.Context): InstalledSkillApp | undefined {
   let store: preferences.Preferences = preferences.getPreferencesSync(context, { name: STORE_NAME });
   let raw: preferences.ValueType = store.getSync(INSTALLED_APP_KEY, '');
   if (typeof raw === 'string' && raw.length > 0) {
     try {
-      return JSON.parse(raw) as InstalledNestedApp;
+      return JSON.parse(raw) as InstalledSkillApp;
     } catch (e) {
     }
   }

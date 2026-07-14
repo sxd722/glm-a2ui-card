@@ -1,0 +1,143 @@
+{
+  "schemaVersion": "1.0",
+  "skillId": "COC_KEEPER_V1",
+  "skillName": "COC 团主助手 / COC Keeper Agent",
+  "version": "1.0",
+  "description": "本技能旨在帮助团主管理游戏中的团队，包括NPC管理、消息管理、战斗管理等。",
+  "goals": [
+    {
+      "id": "manage NPCs",
+      "label": "Manage NPCs",
+      "kind": "string",
+      "required": true,
+      "options": []
+    },
+    {
+      "id": "message management",
+      "label": "Message Management",
+      "kind": "string",
+      "required": true,
+      "options": []
+    },
+    {
+      "id": "battle management",
+      "label": "Battle Management",
+      "kind": "string",
+      "required": true,
+      "options": []
+    }
+  ],
+  "inputFields": [
+    {
+      "id": "npc_id",
+      "label": "NPC ID",
+      "kind": "string",
+      "required": true,
+      "options": []
+    },
+    {
+      "id": "message_content",
+      "label": "Message Content",
+      "kind": "string",
+      "required": true,
+      "options": []
+    },
+    {
+      "id": "battle_command",
+      "label": "Battle Command",
+      "kind": "string",
+      "required": true,
+      "options": []
+    }
+  ],
+  "outputFields": [],
+  "workflow": [
+    {
+      "step": "1",
+      "action": "Create NPC"
+    },
+    {
+      "step": "2",
+      "action": "Send Message"
+    },
+    {
+      "step": "3",
+      "action": "Start Battle"
+    }
+  ],
+  "decisionPoints": [],
+  "toolContracts": [
+    {
+      "name": "NPC Manager",
+      "description": "Manage NPCs in the game.",
+      "adapterId": "npc_manager",
+      "inputFields": [
+        {
+          "id": "npc_id",
+          "label": "NPC ID",
+          "kind": "string",
+          "required": true,
+          "options": []
+        }
+      ],
+      "outputFields": [],
+      "allowedOrigins": ["*"],
+      "credentialRef": "",
+      "confirmation": false,
+      "implemented": false
+    },
+    {
+      "name": "Message Sender",
+      "description": "Send messages to players.",
+      "adapterId": "message_sender",
+      "inputFields": [
+        {
+          "id": "message_content",
+          "label": "Message Content",
+          "kind": "string",
+          "required": true,
+          "options": []
+        }
+      ],
+      "outputFields": [],
+      "allowedOrigins": ["*"],
+      "credentialRef": "",
+      "confirmation": false,
+      "implemented": false
+    },
+    {
+      "name": "Battle Commander",
+      "description": "Control battles in the game.",
+      "adapterId": "battle_commander",
+      "inputFields": [
+        {
+          "id": "battle_command",
+          "label": "Battle Command",
+          "kind": "string",
+          "required": true,
+          "options": []
+        }
+      ],
+      "outputFields": [],
+      "allowedOrigins": ["*"],
+      "credentialRef": "",
+      "confirmation": false,
+      "implemented": false
+    }
+  ],
+  "permissions": ["read", "write"],
+  "constraints": [
+    "The skill must be used within the game environment."
+  ],
+  "examples": [
+    {
+      "example": "Create an NPC with ID '123' and name 'Guardian'."
+    },
+    {
+      "example": "Send a message to all players: 'Attention! A new quest has started!'"
+    },
+    {
+      "example": "Start a battle with the team against the 'Dragon King'."
+    }
+  ]
+}
