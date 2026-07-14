@@ -1601,14 +1601,11 @@ struct Index {
       }
       return;
     }
-    let shouldInvokeAgent: boolean = current.kind === 'invokeAgent' || current.handling === 'agent' ||
-      current.handling === 'localThenAgent';
+    // Action kind is authoritative. A malformed handling field must never promote a local UI event into a GLM request.
+    let shouldInvokeAgent: boolean = current.kind === 'invokeAgent';
     if (shouldInvokeAgent && this.apiKey.length > 0) {
       let config: GlmLocalConfig = { baseUrl: GLM_CODING_ENDPOINT, apiKey: this.apiKey, model: GLM_DEFAULT_MODEL };
       try {
-        if (current.handling === 'localThenAgent' && current.kind !== 'invokeAgent') {
-          this.nestedSession = reduceNestedAction(this.nestedSession, current);
-        }
         this.nestedSession.status = 'thinking';
         this.nestedSession.agentTrace = 'GLM 正在处理 UI 事件：' + current.label;
         let turn: RuntimeAgentTurnRequest = buildRuntimeAgentTurnRequest(this.nestedSession, current,
@@ -2164,8 +2161,8 @@ function trimDebugText(value: string): string {
 }
 
 function isDebugNestedActionKind(value: string): boolean {
-  return value === 'navigate' || value === 'back' || value === 'invokeAgent' ||
-    value === 'pickLocalImage' || value === 'reset';
+  return value === 'navigate' || value === 'back' || value === 'localMutate' || value === 'invokeTool' ||
+    value === 'invokeAgent' || value === 'pickLocalImage' || value === 'reset';
 }
 
 function isDebugNestedActionHandling(value: string): boolean {

@@ -50,8 +50,13 @@ const APP_BLUEPRINT_SYSTEM_PROMPT: string =
 const ARK_UI_PAGE_SYSTEM_PROMPT: string =
   'Design one native HarmonyOS page and return strict ArkUiPage JSON only. No markdown, JSX, ArkTS, URLs, comments, or arbitrary values. ' +
   'Return id,title,scroll,root. Every node requires id,type,className,props,binding,actions,children. ' +
-  'Allowed types: Column,Row,Stack,Scroll,Grid,List,Text,Image,Button,TextInput,TextArea,Toggle,Progress,Divider,Spacer,Badge,DynamicSlot. ' +
-  'Allowed actions: navigate,back,invokeAgent,pickLocalImage,reset. Every action requires id,label,kind,targetPageId,payload,handling; payload must be a string. ' +
+  'Allowed types: Column,Row,Stack,Scroll,Grid,List,Text,Image,Button,TextInput,TextArea,Toggle,ChoiceChips,SegmentedControl,Progress,Divider,Spacer,Badge,DynamicSlot. ' +
+  'Allowed actions: navigate,back,localMutate,invokeTool,invokeAgent,pickLocalImage,reset. Every action requires id,label,kind,targetPageId,payload,handling,effects,guards; localMutate uses effects, invokeTool uses tool. ' +
+  'kind is authoritative: localMutate, invokeTool, navigate, back, pickLocalImage, and reset must use handling local; only invokeAgent may use handling agent. ' +
+  'For checkbox, tab, choice, counter, filter, visibility, and simple form transitions use localMutate and never invokeAgent. ' +
+  'Use invokeTool for a registered deterministic tool with bound args. Use invokeAgent only for reasoning, generation, ambiguity, or unstructured interpretation. ' +
+  'localMutate effects use {op,path,value,valueFrom}; allowed ops are set,toggle,increment,append,remove,merge,clear. ' +
+  'guards use {path,op,value}; allowed guard ops are exists,eq,neq,truthy,contains,gt,gte,lt,lte. ' +
   'className uses only this Tailwind subset: flex flex-col flex-row flex-1 w-full h-8 h-10 h-12 h-16 h-20 h-24 h-32 ' +
   'p-0 p-1 p-2 p-3 p-4 p-5 p-6 p-8 px-2 px-3 px-4 px-5 py-2 py-3 py-4 pt-2 pb-2 mt-2 mb-2 gap-1 gap-2 gap-3 gap-4 gap-5 gap-6 ' +
   'text-xs text-sm text-base text-lg text-xl text-2xl text-3xl font-medium font-semibold font-bold text-center text-right ' +
@@ -63,9 +68,10 @@ const ARK_UI_PAGE_SYSTEM_PROMPT: string =
   'Build a polished Morandi translucent interface with strong hierarchy, compact typography, coherent spacing, and at least one clear action.';
 
 const RUNTIME_AGENT_SYSTEM_PROMPT: string =
-  'Run one Nested App agent turn. Return strict RuntimeAgentTurnResult JSON only with turnId,assistantText,toolCalls,statePatches,uiPatches,navigationPageId,suggestedActions,status,errorMessage. ' +
-  'Only call availableTools. statePatches allow setData or updateStatus. uiPatches allow setVisibility,setEnabled,replaceItems,appendItems,setSuggestedActions,mountDynamicView,dismissDynamicView. ' +
-  'Use only supplied dynamicSlotIds. Return 2 to 4 suggestedActions. Never request or expose credentials.';
+  'Run one Nested App agent turn. Return one JSON object only. Prefer the compact fields turnId,assistantText,state,toolCalls,navigateTo,suggestedActions,status,errorMessage. ' +
+  'All fields except assistantText may be omitted when unused; state is a flat map and values may be strings, booleans, numbers, or JSON arrays. ' +
+  'Only call availableTools. Use toolCalls only for reasoning-required orchestration; simple UI state is handled locally by the Action DSL. ' +
+  'Legacy statePatches and uiPatches are accepted but avoid them. Use only supplied dynamicSlotIds. Return at most 4 suggestedActions. Never request or expose credentials.';
 
 export async function requestA2uiDslFromGlm(prompt: string, config: GlmLocalConfig): Promise<string> {
   let messages: GlmMessage[] = [

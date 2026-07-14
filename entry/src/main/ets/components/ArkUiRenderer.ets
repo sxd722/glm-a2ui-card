@@ -1,4 +1,4 @@
-import { ArkUiAction, ArkUiSessionState, CompiledArkUiNode, LocalImageAsset } from '../services/ArkUiTypes';
+import { ArkUiAction, ArkUiSessionState, CompiledArkUiNode, LocalCondition, LocalImageAsset } from '../services/ArkUiTypes';
 
 @Component
 export struct ArkUiNodeRenderer {
@@ -8,7 +8,9 @@ export struct ArkUiNodeRenderer {
   onValueChange: (key: string, value: string) => void = (key: string, value: string): void => {};
 
   build() {
-    if (this.node.type === 'Column' || this.node.type === 'List' || this.node.type === 'Scroll') {
+    if (!this.isNodeVisible()) {
+      Blank().width(0).height(0)
+    } else if (this.node.type === 'Column' || this.node.type === 'List' || this.node.type === 'Scroll') {
       Column({ space: this.node.style.gap }) {
         this.RenderChildren()
       }
@@ -118,6 +120,22 @@ export struct ArkUiNodeRenderer {
         Toggle({ type: ToggleType.Switch, isOn: this.boundValue() === 'true' })
           .onChange((value: boolean) => { this.onValueChange(this.node.binding, value ? 'true' : 'false'); })
       }.width('100%').padding(this.paddingValue()).backgroundColor(this.node.style.backgroundColor).borderRadius(this.node.style.borderRadius)
+    } else if (this.node.type === 'ChoiceChips' || this.node.type === 'SegmentedControl') {
+      Column({ space: 8 }) {
+        if (this.prop('label').length > 0) {
+          Text(this.prop('label')).fontSize(this.node.style.fontSize).fontColor(this.node.style.foregroundColor)
+        }
+        Row({ space: 8 }) {
+          ForEach(this.choiceItems(), (item: string) => {
+            Button(item)
+              .height(36)
+              .backgroundColor(this.boundValue() === item ? this.node.style.foregroundColor : this.node.style.backgroundColor)
+              .fontColor(this.boundValue() === item ? this.node.style.backgroundColor : this.node.style.foregroundColor)
+              .borderRadius(this.node.style.borderRadius)
+              .onClick(() => { this.onValueChange(this.node.binding, item); })
+          }, (item: string) => item)
+        }
+      }.width('100%').padding(this.paddingValue()).backgroundColor(this.node.style.backgroundColor).borderRadius(this.node.style.borderRadius)
     } else if (this.node.type === 'Progress') {
       Progress({ value: this.progressValue(), total: 100, type: ProgressType.Linear })
         .width('100%').height(this.node.style.height > 0 ? this.node.style.height : 8)
@@ -164,6 +182,33 @@ export struct ArkUiNodeRenderer {
   }
 
   private prop(key: string): string { let value: string | undefined = this.node.props[key]; return value === undefined ? '' : value; }
+  private choiceItems(): string[] {
+    let raw: string = this.prop('items'); if (raw.length === 0) { return []; }
+    let parts: string[] = raw.split(','); let result: string[] = [];
+    for (let i: number = 0; i < parts.length; i++) { if (parts[i].trim().length > 0) { result.push(parts[i].trim()); } }
+    return result;
+  }
+
+  private isNodeVisible(): boolean {
+    return this.conditionPass(this.node.visibleWhen);
+  }
+
+  private conditionPass(condition: LocalCondition | undefined): boolean {
+    if (condition === undefined || condition.path.length === 0) { return true; }
+    let actual: string = this.session.data[condition.path] === undefined ? '' : this.session.data[condition.path];
+    let expected: string = condition.value;
+    if (condition.op === 'exists') { return actual.length > 0; }
+    if (condition.op === 'eq') { return actual === expected; }
+    if (condition.op === 'neq') { return actual !== expected; }
+    if (condition.op === 'truthy') { return actual === 'true' || actual === '1' || actual.length > 0; }
+    if (condition.op === 'contains') { return actual.indexOf(expected) >= 0; }
+    if (condition.op === 'gt') { return Number(actual) > Number(expected); }
+    if (condition.op === 'gte') { return Number(actual) >= Number(expected); }
+    if (condition.op === 'lt') { return Number(actual) < Number(expected); }
+    if (condition.op === 'lte') { return Number(actual) <= Number(expected); }
+    return true;
+  }
+
   private invokeFirstAction(): void { if (this.node.actions.length > 0) { this.onAction(this.node.actions[0]); } }
   private progressValue(): number { let value: number = Number.parseInt(this.boundValue()); return Number.isNaN(value) ? 0 : value; }
   private fontWeight(): FontWeight { if (this.node.style.fontWeight === 'bold') { return FontWeight.Bold; } if (this.node.style.fontWeight === 'semibold') { return FontWeight.Medium; } if (this.node.style.fontWeight === 'medium') { return FontWeight.Medium; } return FontWeight.Normal; }

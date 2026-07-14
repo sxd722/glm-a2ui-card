@@ -8,6 +8,8 @@ import {
   RuntimeToolCall,
   RuntimeToolResult,
   RuntimeUiPatch,
+  RuntimeUiPatchOperation,
+  RuntimeStatus,
   SkillManifest,
   ToolContract
 } from './SkillAppTypes';
@@ -52,13 +54,11 @@ export function buildRuntimeAgentTurnRequest(session: NestedSessionState, curren
 
 export function normalizeRuntimeAgentTurnResult(raw: string): RuntimeAgentTurnResult {
   try {
-    let parsed: RuntimeAgentTurnResult = JSON.parse(cleanJson(raw)) as RuntimeAgentTurnResult;
-    if (isValidTurnResult(parsed)) {
-      return sanitizeTurnResult(parsed);
-    }
+    let parsed: Record<string, Object> = JSON.parse(cleanJson(raw)) as Record<string, Object>;
+    return sanitizeTurnPayload(parsed);
   } catch (e) {
+    return errorTurn('GLM Runtime 返回无法解析，已保留当前 UI。');
   }
-  return errorTurn('GLM 返回的 RuntimeAgentTurnResult 不合法。');
 }
 
 export function applyRuntimeAgentTurn(session: NestedSessionState, result: RuntimeAgentTurnResult,
@@ -164,6 +164,86 @@ function applyUiPatches(session: NestedSessionState, patches: RuntimeUiPatch[]):
       session.data['dynamicSlot'] = '';
     }
   }
+}
+
+function sanitizeTurnPayload(raw: Record<string, Object>): RuntimeAgentTurnResult {
+  let statePatches: RuntimeStatePatch[] = sanitizeStatePatches(raw['statePatches']);
+  let state: Record<string, Object> | undefined = objectValue(raw['state']);
+  if (state !== undefined) {
+    let keys: string[] = Object.keys(state);
+    for (let i: number = 0; i < keys.length; i++) {
+      statePatches.push({ op: 'setData', key: keys[i], value: stringValue(state[keys[i]]) });
+    }
+  }
+  let toolCalls: RuntimeToolCall[] = sanitizeToolCalls(raw['toolCalls']);
+  let statusValue: string = stringValue(raw['status']);
+  if (STATUSES.indexOf(statusValue) < 0) { statusValue = toolCalls.length > 0 ? 'toolRunning' : 'complete'; }
+  return {
+    turnId: stringValue(raw['turnId']).length > 0 ? stringValue(raw['turnId']) : 'runtime-turn',
+    assistantText: stringValue(raw['assistantText']),
+    toolCalls: toolCalls,
+    statePatches: statePatches,
+    uiPatches: sanitizeUiPatches(raw['uiPatches']),
+    navigationPageId: stringValue(raw['navigationPageId']).length > 0 ? stringValue(raw['navigationPageId']) : stringValue(raw['navigateTo']),
+    suggestedActions: stringArray(raw['suggestedActions']).slice(0, 4),
+    status: statusValue as RuntimeStatus,
+    errorMessage: stringValue(raw['errorMessage'])
+  };
+}
+
+function sanitizeStatePatches(value: Object): RuntimeStatePatch[] {
+  if (!Array.isArray(value)) { return []; }
+  let result: RuntimeStatePatch[] = [];
+  for (let i: number = 0; i < value.length; i++) {
+    let item: Record<string, Object> = value[i] as Record<string, Object>;
+    let op: string = stringValue(item['op']); let key: string = stringValue(item['key']);
+    if (op === 'setData' && key.length > 0) { result.push({ op: 'setData', key: key, value: stringValue(item['value']) }); }
+    else if (op === 'updateStatus') { result.push({ op: 'updateStatus', key: '', value: stringValue(item['value']) }); }
+  }
+  return result;
+}
+
+function sanitizeUiPatches(value: Object): RuntimeUiPatch[] {
+  if (!Array.isArray(value)) { return []; }
+  let result: RuntimeUiPatch[] = [];
+  for (let i: number = 0; i < value.length; i++) {
+    let item: Record<string, Object> = value[i] as Record<string, Object>;
+    let op: string = stringValue(item['op']);
+    if (UI_PATCHES.indexOf(op) < 0) { continue; }
+    result.push({ op: op as RuntimeUiPatchOperation, targetId: stringValue(item['targetId']), value: stringValue(item['value']), items: stringArray(item['items']) });
+  }
+  return result;
+}
+
+function sanitizeToolCalls(value: Object): RuntimeToolCall[] {
+  if (!Array.isArray(value)) { return []; }
+  let result: RuntimeToolCall[] = [];
+  for (let i: number = 0; i < value.length; i++) {
+    let item: Record<string, Object> = value[i] as Record<string, Object>;
+    let name: string = stringValue(item['toolName']).length > 0 ? stringValue(item['toolName']) : stringValue(item['name']);
+    if (name.length === 0) { continue; }
+    let args: Object = item['argsJson'] === undefined ? item['args'] : item['argsJson'];
+    result.push({ toolName: name, callId: stringValue(item['callId']).length > 0 ? stringValue(item['callId']) : 'call-' + i.toString(), argsJson: stringValue(args) });
+  }
+  return result;
+}
+
+function objectValue(value: Object): Record<string, Object> | undefined {
+  return value !== undefined && value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, Object> : undefined;
+}
+
+function stringArray(value: Object): string[] {
+  if (!Array.isArray(value)) { return []; }
+  let result: string[] = [];
+  for (let i: number = 0; i < value.length; i++) { result.push(stringValue(value[i])); }
+  return result;
+}
+
+function stringValue(value: Object): string {
+  if (value === undefined || value === null) { return ''; }
+  if (typeof value === 'string') { return value as string; }
+  if (typeof value === 'number' || typeof value === 'boolean') { return String(value); }
+  try { return JSON.stringify(value); } catch (e) { return ''; }
 }
 
 function sanitizeTurnResult(result: RuntimeAgentTurnResult): RuntimeAgentTurnResult {
@@ -276,7 +356,9 @@ function summarizeToolResults(results: RuntimeToolResult[]): string {
 }
 
 function cleanJson(raw: string): string {
-  return raw.replace('```json', '').replace('```', '').trim();
+  let cleaned: string = raw.replace('```json', '').replace('```', '').trim();
+  let start: number = cleaned.indexOf('{'); let end: number = cleaned.lastIndexOf('}');
+  return start >= 0 && end > start ? cleaned.substring(start, end + 1) : cleaned;
 }
 
 function cloneNestedSession(session: NestedSessionState): NestedSessionState {
