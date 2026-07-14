@@ -9,7 +9,7 @@ Skill source -> SkillManifest -> AppBlueprint -> ArkUiPage[] -> ArkUiSpec -> nat
 ```
 
 - `AppBlueprint` contains product intent and 2-5 page plans. It does not contain UI nodes.
-- GLM-5.2 generates each `ArkUiPage` separately with streaming output.
+- GLM-5.2 generates each `ArkUiPage` separately with a non-streaming request and a 10-minute timeout.
 - `ArkUiCompiler` accepts a small Tailwind-like utility whitelist and resolves it to typed ArkUI style data.
 - `ArkUiNodeRenderer` recursively maps the JSON tree to native ArkUI components. No ArkTS, JSX, `eval`, WebView, or remote code is executed.
 - User actions are routed through the existing local/agent/localThenAgent interaction router and tool whitelist.
@@ -45,10 +45,9 @@ Allowed nodes are `Column`, `Row`, `Stack`, `Scroll`, `Grid`, `List`, `Text`, `I
 
 ## Failure Behavior
 
-- The streaming timeout is an idle timeout. Each received chunk resets the 120-second timer.
-- If a stream ends abnormally after yielding content, the accumulated content is still parsed.
+- Blueprint and page generation use non-streaming responses with a 10-minute timeout because GLM-5.2 may need several minutes for structured UI JSON.
 - GLM-5.2 failure falls back to GLM-4.7-Flash per blueprint or page.
-- Invalid page JSON falls back only that page to a local safe page; already generated pages remain visible in the DSL artifact panel.
+- If both GLM-5.2 and GLM-4.7-Flash fail validation, generation stops and preserves the last valid Blueprint/ArkUiSpec. It never injects a local travel or weather page for an unrelated Skill.
 - Unknown nodes, utilities, pages, actions, and tools are ignored, repaired, or rejected by the native layer.
 
 ## Deferred

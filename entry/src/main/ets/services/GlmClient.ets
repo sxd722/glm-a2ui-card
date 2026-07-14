@@ -1,5 +1,4 @@
 import { http } from '@kit.NetworkKit';
-import { util } from '@kit.ArkTS';
 import { GlmChatPayload, GlmChatResponse, GlmContentPart, GlmLocalConfig, GlmMessage } from './A2uiTypes';
 import { AgentTurnRequest } from './SkillTypes';
 import { AppBlueprint, AppPagePlan, RuntimeAgentTurnRequest, SkillManifest, SkillSource } from './SkillAppTypes';
@@ -14,10 +13,8 @@ export const GLM_BLUEPRINT_FALLBACK_MODEL: string = 'glm-4.7-flash';
 export const GLM_VISION_MODEL: string = 'glm-4.6v-flash';
 export const GLM_VISION_FALLBACK_MODEL: string = 'glm-4v-flash';
 export const GLM_LOCAL_API_KEY: string = GLM_API_KEY;
-export const GLM_REQUEST_TIMEOUT_MS: number = 120000;
-const GLM_STREAM_MAX_RAW_LENGTH: number = 1024 * 1024;
-
-export type GlmStreamProgress = (partialContent: string) => void;
+export const GLM_REQUEST_TIMEOUT_MS: number = 600000;
+export const GLM_VISION_REQUEST_TIMEOUT_MS: number = 120000;
 
 const SYSTEM_PROMPT: string =
   'You generate A2UI v0.9 JSONL only. Return one createSurface message and one updateDataModel message. ' +
@@ -140,11 +137,11 @@ export async function requestSkillManifestFromGlmImage(imageDataUrl: string, loc
     { role: 'system', content: VISUAL_SKILL_MANIFEST_SYSTEM_PROMPT },
     { role: 'user', content: parts }
   ];
-  return requestChatContent(messages, config, 0.1, 120000);
+  return requestChatContent(messages, config, 0.1, GLM_VISION_REQUEST_TIMEOUT_MS);
 }
 
 export async function requestAppBlueprintFromGlm(manifest: SkillManifest, localAssetIds: string[],
-  config: GlmLocalConfig, onProgress?: GlmStreamProgress): Promise<string> {
+  config: GlmLocalConfig): Promise<string> {
   let manifestPayload: AppBlueprintRequest = {
     manifest: manifest,
     localAssetIds: localAssetIds
@@ -153,23 +150,18 @@ export async function requestAppBlueprintFromGlm(manifest: SkillManifest, localA
     { role: 'system', content: APP_BLUEPRINT_SYSTEM_PROMPT },
     { role: 'user', content: JSON.stringify(manifestPayload) }
   ];
-  if (onProgress !== undefined) {
-    return requestChatContentStreaming(messages, config, 0.4, onProgress);
-  }
-  return requestChatContent(messages, config, 0.4, 120000);
+  return requestChatContent(messages, config, 0.4, GLM_REQUEST_TIMEOUT_MS);
 }
 
 export async function requestArkUiPageFromGlm(manifest: SkillManifest, blueprint: AppBlueprint,
-  pagePlan: AppPagePlan, localAssetIds: string[], config: GlmLocalConfig,
-  onProgress?: GlmStreamProgress): Promise<string> {
+  pagePlan: AppPagePlan, localAssetIds: string[], config: GlmLocalConfig): Promise<string> {
   let request: ArkUiPageRequest = { manifest: manifest, blueprint: blueprint, pagePlan: pagePlan,
     localAssetIds: localAssetIds, allowedPageIds: pageIds(blueprint) };
   let messages: GlmMessage[] = [
     { role: 'system', content: ARK_UI_PAGE_SYSTEM_PROMPT },
     { role: 'user', content: JSON.stringify(request) }
   ];
-  if (onProgress !== undefined) { return requestChatContentStreaming(messages, config, 0.35, onProgress); }
-  return requestChatContent(messages, config, 0.35, 120000);
+  return requestChatContent(messages, config, 0.35, GLM_REQUEST_TIMEOUT_MS);
 }
 
 export async function requestNestedRuntimeTurnFromGlm(turn: RuntimeAgentTurnRequest,
@@ -200,244 +192,6 @@ function pageIds(blueprint: AppBlueprint): string[] {
   return ids;
 }
 
-interface GlmStreamDelta {
-  content?: string;
-}
-
-interface GlmStreamMessage {
-  content?: string;
-}
-
-interface GlmStreamChoice {
-  delta?: GlmStreamDelta;
-  message?: GlmStreamMessage;
-  text?: string;
-}
-
-interface GlmStreamResponse {
-  choices?: GlmStreamChoice[];
-  content?: string;
-}
-
-class GlmSseAccumulator {
-  private decoder: util.TextDecoder = util.TextDecoder.create('utf-8', { fatal: false, ignoreBOM: true });
-  private lineBuffer: string = '';
-  private contentValue: string = '';
-  private rawValue: string = '';
-  private progress: GlmStreamProgress;
-
-  constructor(progress: GlmStreamProgress) {
-    this.progress = progress;
-  }
-
-  append(data: ArrayBuffer): void {
-    let text: string = this.decoder.decodeToString(new Uint8Array(data), { stream: true });
-    this.consumeText(text);
-  }
-
-  finish(): void {
-    let tail: string = this.decoder.decodeToString(new Uint8Array(0), { stream: false });
-    this.consumeText(tail);
-    if (this.lineBuffer.trim().length > 0) {
-      this.consumeLine(this.lineBuffer);
-      this.lineBuffer = '';
-    }
-    this.progress(normalizeDslContent(this.contentValue));
-  }
-
-  content(): string {
-    return this.contentValue;
-  }
-
-  raw(): string {
-    return this.rawValue;
-  }
-
-  hasOutput(): boolean {
-    return this.contentValue.length > 0 || this.rawValue.trim().length > 0;
-  }
-
-  private consumeText(text: string): void {
-    if (text.length === 0) {
-      return;
-    }
-    if (this.rawValue.length < GLM_STREAM_MAX_RAW_LENGTH) {
-      this.rawValue = (this.rawValue + text).substring(0, GLM_STREAM_MAX_RAW_LENGTH);
-    }
-    this.lineBuffer = this.lineBuffer + text;
-    let lines: string[] = this.lineBuffer.split('\n');
-    let pending: string | undefined = lines.pop();
-    this.lineBuffer = pending === undefined ? '' : pending;
-    for (let i: number = 0; i < lines.length; i++) {
-      this.consumeLine(lines[i]);
-    }
-  }
-
-  private consumeLine(line: string): void {
-    let normalizedLine: string = line.trim();
-    if (normalizedLine.indexOf('data:') === 0) {
-      normalizedLine = normalizedLine.substring(5).trim();
-    } else if (normalizedLine.length === 0 || normalizedLine.indexOf('{') !== 0) {
-      return;
-    }
-    let data: string = normalizedLine;
-    if (data.length === 0 || data === '[DONE]') {
-      return;
-    }
-    try {
-      let event: GlmStreamResponse = JSON.parse(data) as GlmStreamResponse;
-      let delta: string | undefined = undefined;
-      if (event.choices !== undefined && event.choices.length > 0) {
-        let choice: GlmStreamChoice = event.choices[0];
-        if (choice.delta !== undefined && typeof choice.delta.content === 'string') {
-          delta = choice.delta.content;
-        } else if (choice.message !== undefined && typeof choice.message.content === 'string') {
-          delta = choice.message.content;
-        } else if (typeof choice.text === 'string') {
-          delta = choice.text;
-        }
-      }
-      if (delta === undefined && typeof event.content === 'string') {
-        delta = event.content;
-      }
-      if (typeof delta === 'string' && delta.length > 0) {
-        this.contentValue = this.contentValue + delta;
-        this.progress(normalizeDslContent(this.contentValue));
-      }
-    } catch (error) {
-    }
-  }
-}
-
-async function requestChatContentStreaming(messages: GlmMessage[], config: GlmLocalConfig, temperature: number,
-  onProgress: GlmStreamProgress): Promise<string> {
-  let client: http.HttpRequest = http.createHttp();
-  let payload: GlmChatPayload = {
-    model: config.model,
-    messages: messages,
-    temperature: temperature,
-    stream: true
-  };
-  let accumulator: GlmSseAccumulator = new GlmSseAccumulator(onProgress);
-  let idleTimer: number = -1;
-  let streamEnded: boolean = false;
-  let resolveStreamEnd: () => void = () => {};
-  let rejectStreamEnd: (error: Error) => void = () => {};
-  let streamEnd: Promise<void> = new Promise<void>((resolve: () => void, reject: (error: Error) => void) => {
-    resolveStreamEnd = resolve;
-    rejectStreamEnd = reject;
-  });
-  let resetIdleTimeout = (): void => {
-    if (idleTimer >= 0) {
-      clearTimeout(idleTimer);
-    }
-    idleTimer = setTimeout(() => {
-      if (!streamEnded) {
-        if (accumulator.hasOutput()) {
-          streamEnded = true;
-          accumulator.finish();
-          resolveStreamEnd();
-        } else {
-          rejectStreamEnd(new Error('GLM 流式请求 120 秒无新数据，工作流已终止。'));
-        }
-        client.destroy();
-      }
-    }, GLM_REQUEST_TIMEOUT_MS);
-  };
-  let onDataReceive = (data: ArrayBuffer): void => {
-    resetIdleTimeout();
-    accumulator.append(data);
-  };
-  let onDataEnd = (): void => {
-    streamEnded = true;
-    if (idleTimer >= 0) {
-      clearTimeout(idleTimer);
-      idleTimer = -1;
-    }
-    accumulator.finish();
-    resolveStreamEnd();
-  };
-
-  client.on('dataReceive', onDataReceive);
-  client.on('dataEnd', onDataEnd);
-  resetIdleTimeout();
-  try {
-    let responseCode: number = -1;
-    let requestErrorMessage: string = '';
-    let requestPromise: Promise<number> = client.requestInStream(resolveChatCompletionsUrl(config.baseUrl), {
-      method: http.RequestMethod.POST,
-      header: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + config.apiKey
-      },
-      extraData: JSON.stringify(payload),
-      connectTimeout: 15000,
-      readTimeout: GLM_REQUEST_TIMEOUT_MS
-    }).then((code: number): number => {
-      responseCode = code;
-      return code;
-    }, (error: Error): number => {
-      requestErrorMessage = error.message;
-      return -1;
-    });
-    await Promise.race([requestPromise, streamEnd.then((): number => 0)]);
-    if (requestErrorMessage.length > 0) {
-      if (!accumulator.hasOutput()) {
-        streamEnd.catch((ignored: Error): void => {});
-        throw new Error(requestErrorMessage);
-      }
-      streamEnded = true;
-      if (idleTimer >= 0) {
-        clearTimeout(idleTimer);
-        idleTimer = -1;
-      }
-      accumulator.finish();
-      resolveStreamEnd();
-    }
-    let hasOutput: boolean = accumulator.hasOutput();
-    if (responseCode < 200 || responseCode >= 300) {
-      if (hasOutput) {
-        responseCode = 200;
-      } else {
-        throw new Error('GLM HTTP ' + responseCode.toString() + ': ' + accumulator.raw());
-      }
-    }
-    try {
-      await streamEnd;
-    } catch (streamError) {
-      if (!accumulator.hasOutput()) {
-        let streamErr: Error = streamError as Error;
-        throw new Error(streamErr.message);
-      }
-    }
-    let content: string = normalizeDslContent(accumulator.content());
-    if (content.length > 0) {
-      return content;
-    }
-    let nonStreamContent: string = extractContent(accumulator.raw());
-    if (nonStreamContent.length > 0 && nonStreamContent !== accumulator.raw()) {
-      onProgress(nonStreamContent);
-      return nonStreamContent;
-    }
-    throw new Error('GLM 流式响应未包含可用内容');
-  } catch (error) {
-    let err: Error = error as Error;
-    let message: string = typeof err.message === 'string' ? err.message : 'unknown error';
-    if (message.indexOf('120 秒') >= 0 || message.toLowerCase().indexOf('timeout') >= 0) {
-      throw new Error('GLM 流式请求 120 秒无新数据，工作流已终止。');
-    }
-    throw new Error(message);
-  } finally {
-    streamEnded = true;
-    if (idleTimer >= 0) {
-      clearTimeout(idleTimer);
-    }
-    client.off('dataReceive', onDataReceive);
-    client.off('dataEnd', onDataEnd);
-    client.destroy();
-  }
-}
-
 async function requestChatContent(messages: GlmMessage[], config: GlmLocalConfig, temperature: number,
   readTimeout: number = GLM_REQUEST_TIMEOUT_MS): Promise<string> {
   let client: http.HttpRequest = http.createHttp();
@@ -457,7 +211,7 @@ async function requestChatContent(messages: GlmMessage[], config: GlmLocalConfig
     for (let attempt: number = 1; attempt <= maxAttempts; attempt++) {
       let remainingMs: number = deadline - Date.now();
       if (remainingMs <= 0) {
-        throw new Error('GLM 请求 120 秒未返回，工作流已终止。');
+        throw new Error(timeoutMessage(timeoutMs));
       }
       let response: http.HttpResponse;
       try {
@@ -476,7 +230,7 @@ async function requestChatContent(messages: GlmMessage[], config: GlmLocalConfig
         let err: Error = error as Error;
         let message: string = typeof err.message === 'string' ? err.message.toLowerCase() : '';
         if (Date.now() >= deadline || message.indexOf('timeout') >= 0) {
-          throw new Error('GLM 请求 120 秒未返回，工作流已终止。');
+          throw new Error(timeoutMessage(timeoutMs));
         }
         throw new Error('GLM 请求失败：' + err.message);
       }
@@ -490,7 +244,7 @@ async function requestChatContent(messages: GlmMessage[], config: GlmLocalConfig
       }
       let retryDelay: number = 1500 * attempt * attempt;
       if (Date.now() + retryDelay >= deadline) {
-        throw new Error('GLM 请求 120 秒未返回，工作流已终止。');
+        throw new Error(timeoutMessage(timeoutMs));
       }
       await waitForRetry(retryDelay);
     }
@@ -498,6 +252,10 @@ async function requestChatContent(messages: GlmMessage[], config: GlmLocalConfig
   } finally {
     client.destroy();
   }
+}
+
+function timeoutMessage(timeoutMs: number): string {
+  return 'GLM 请求 ' + Math.floor(timeoutMs / 1000).toString() + ' 秒未返回，工作流已终止。';
 }
 
 function isRetryableResponse(responseCode: number): boolean {

@@ -92,15 +92,12 @@ export function defaultWeatherArkUiSpec(): ArkUiSpec {
 
 export function createNestedSession(spec: ArkUiSpec): ArkUiSessionState {
   let data: Record<string, string> = {};
-  data['departure'] = '上海'; data['destination'] = '成都'; data['dates'] = '3 天 2 晚'; data['budget'] = '5000 元';
-  data['preferences'] = '美食、慢游'; data['status'] = '准备开始'; data['itinerary'] = ''; data['budgetSummary'] = '';
-  data['checklist'] = ''; data['weatherSummary'] = '等待天气工具接入'; data['forecast'] = '等待天气工具接入'; data['agentSummary'] = '';
   return { app: compileArkUiSpec(spec), activePageId: spec.initialPageId, routeStack: [spec.initialPageId], data: data,
     assets: [], status: 'idle', agentTrace: 'ArkUiSpec 已编译为原生 UI。', errorMessage: '' };
 }
 
-export function normalizeNestedApp(raw: string): ArkUiSpec {
-  return normalizeArkUiSpec(raw, defaultTravelNestedApp());
+export function normalizeNestedApp(raw: string, current: ArkUiSpec): ArkUiSpec {
+  return normalizeArkUiSpec(raw, current);
 }
 
 export function normalizeArkUiSpec(raw: string, fallback: ArkUiSpec): ArkUiSpec {
@@ -151,7 +148,7 @@ export function reduceNestedAction(session: ArkUiSessionState, current: ArkUiAct
   let next: ArkUiSessionState = cloneSession(session); next.errorMessage = '';
   if (current.kind === 'navigate') { navigate(next, current.targetPageId); }
   else if (current.kind === 'back' && next.routeStack.length > 1) { next.routeStack.pop(); next.activePageId = next.routeStack[next.routeStack.length - 1]; }
-  else if (current.kind === 'reset') { return createNestedSession(rawSpecFromCompiled(next)); }
+  else if (current.kind === 'reset') { return resetNestedSession(next); }
   else if (current.kind === 'invokeAgent') { applyTravelDemoAgent(next); navigate(next, current.targetPageId); }
   return next;
 }
@@ -224,20 +221,27 @@ function validNode(current: ArkUiNode, depth: number): boolean {
   return true;
 }
 
-function rawSpecFromCompiled(session: ArkUiSessionState): ArkUiSpec {
-  return defaultTravelNestedApp();
+function resetNestedSession(session: ArkUiSessionState): ArkUiSessionState {
+  let data: Record<string, string> = {};
+  return { app: session.app, activePageId: session.app.initialPageId, routeStack: [session.app.initialPageId],
+    data: data, assets: [], status: 'idle', agentTrace: '应用状态已重置。', errorMessage: '' };
 }
 
 function applyTravelDemoAgent(session: ArkUiSessionState): void {
-  let inputs: TravelInputs = { departure: session.data['departure'], destination: session.data['destination'],
-    startDate: session.data['dates'], endDate: session.data['dates'], adults: '2', children: '0', budget: session.data['budget'],
-    preferences: session.data['preferences'], lodging: '', transport: '' };
+  let inputs: TravelInputs = { departure: sessionValue(session, 'departure'), destination: sessionValue(session, 'destination'),
+    startDate: sessionValue(session, 'dates'), endDate: sessionValue(session, 'dates'), adults: '2', children: '0',
+    budget: sessionValue(session, 'budget'), preferences: sessionValue(session, 'preferences'), lodging: '', transport: '' };
   let itinerary: ToolResult = runTravelTool('travel.planDailyItinerary', inputs);
   let budget: ToolResult = runTravelTool('travel.estimateBudget', inputs);
   let checklist: ToolResult = runTravelTool('travel.generateChecklist', inputs);
   session.data['itinerary'] = itinerary.details.join('\n'); session.data['budgetSummary'] = budget.summary + '\n' + budget.details.join('\n');
   session.data['checklist'] = checklist.details.join('\n'); session.data['status'] = '方案已生成'; session.status = 'complete';
   session.agentTrace = 'Agent 已执行本地旅行工具：行程、预算、清单。';
+}
+
+function sessionValue(session: ArkUiSessionState, key: string): string {
+  let current: string | undefined = session.data[key];
+  return current === undefined ? '' : current;
 }
 
 function navigate(session: ArkUiSessionState, pageId: string): void {

@@ -79,9 +79,10 @@ export function normalizeAppBlueprint(raw: string, fallback: AppBlueprint): AppB
   return fallback;
 }
 
-export function compileBlueprint(blueprint: AppBlueprint, spec?: ArkUiSpec): ArkUiSpec {
-  if (spec !== undefined) { return normalizeArkUiSpec(JSON.stringify(spec), defaultTravelNestedApp()); }
-  return blueprint.skillId.indexOf('WEATHER') >= 0 ? defaultWeatherArkUiSpec() : defaultTravelNestedApp();
+export function compileBlueprint(blueprint: AppBlueprint, spec: ArkUiSpec): ArkUiSpec {
+  let normalized: ArkUiSpec = normalizeArkUiSpec(JSON.stringify(spec), spec);
+  normalized.appId = blueprint.appId;
+  return normalized;
 }
 
 export function installBlueprint(draft: ForgeDraft): InstalledSkillApp {
@@ -180,7 +181,9 @@ function sanitizeBlueprint(value: AppBlueprint, fallback: AppBlueprint): AppBlue
   if (typeof b.homePattern !== 'string') { b.homePattern = ''; } if (typeof b.runtimePrompt !== 'string') { b.runtimePrompt = ''; }
   b.palette = strings(b.palette); if (!Array.isArray(b.dynamicSlots)) { b.dynamicSlots = []; }
   if (!Array.isArray(b.componentRecipes)) { b.componentRecipes = []; }
-  if (!Array.isArray(b.pages) || b.pages.length === 0) { b.pages = fallback.pages; }
+  // Missing page plans are not repairable metadata. Keep them invalid so the caller can stop instead of
+  // silently replacing an unrelated Skill with the local travel/weather blueprint.
+  if (!Array.isArray(b.pages)) { b.pages = []; }
   b.pages = b.pages.slice(0, 5);
   for (let i: number = 0; i < b.pages.length; i++) {
     let p: AppPagePlan = b.pages[i]; if (typeof p.id !== 'string' || p.id.length === 0) { p.id = 'page-' + i.toString(); }
