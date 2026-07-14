@@ -2,11 +2,13 @@ import { common } from '@kit.AbilityKit';
 import { fileIo, picker } from '@kit.CoreFileKit';
 import { preferences } from '@kit.ArkData';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
+import { util } from '@kit.ArkTS';
 import { CardPreviewModel } from './A2uiTypes';
 import {
   SkillCard,
   SkillCardAction,
   SkillFieldSpec,
+  SkillInputValue,
   SkillSessionState,
   SkillSpec,
   ToolResult,
@@ -15,7 +17,11 @@ import {
 
 const STORE_NAME: string = 'skillWorkbenchStore';
 const LATEST_SESSION_KEY: string = 'latestSkillSession';
-const BASE64_CHARS: string = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+export interface SkillMarkdownFile {
+  displayName: string;
+  content: string;
+}
 
 export const TRAVEL_TOOL_NAMES: string[] = [
   'travel.validateInputs',
@@ -56,18 +62,146 @@ export function defaultTravelSkillSpec(): SkillSpec {
 }
 
 export function normalizeSkillSpec(raw: string): SkillSpec {
-  let normalized: string = raw
-    .replace('```json', '')
-    .replace('```', '')
-    .trim();
+  let normalized: string = cleanSkillJson(raw);
   try {
-    let parsed: SkillSpec = JSON.parse(normalized) as SkillSpec;
-    if (parsed.skillId === 'TRAVEL_PLANNER_V1' && parsed.inputFields.length > 0) {
-      return parsed;
-    }
-  } catch (e) {
+    let parsed: RawSkillSpec = JSON.parse(normalized) as RawSkillSpec;
+    return sanitizeSkillSpec(parsed);
+  } catch (error) {
+    let err: Error = error as Error;
+    throw new Error('SkillSpec 解析失败：' + err.message);
   }
-  return defaultTravelSkillSpec();
+}
+
+interface RawSkillFieldSpec {
+  id?: string;
+  label?: string;
+  name?: string;
+  placeholder?: string;
+  description?: string;
+  required?: boolean;
+}
+
+interface RawSkillSpec {
+  skillName?: string;
+  title?: string;
+  skillId?: string;
+  goal?: string;
+  description?: string;
+  scenarios?: string[];
+  inputFields?: RawSkillFieldSpec[];
+  flow?: string[];
+  workflow?: string[];
+  outputs?: string[];
+  outputFields?: string[];
+  rules?: string[];
+  constraints?: string[];
+  actions?: string[];
+  examplePrompt?: string;
+  examples?: string[];
+}
+
+interface RawSkillTextObject {
+  id?: string;
+  label?: string;
+  name?: string;
+  step?: string;
+  description?: string;
+  action?: string;
+  output?: string;
+  example?: string;
+}
+
+function sanitizeSkillSpec(raw: RawSkillSpec): SkillSpec {
+  let skillName: string = firstNonEmpty(raw.skillName, raw.title);
+  let skillId: string = typeof raw.skillId === 'string' ? raw.skillId.trim() : '';
+  if (skillName.length === 0 || skillId.length === 0) {
+    throw new Error('缺少非空 skillName 或 skillId');
+  }
+  let examplePrompt: string = typeof raw.examplePrompt === 'string' ? raw.examplePrompt.trim() : '';
+  if (examplePrompt.length === 0) {
+    let examples: string[] = normalizeSkillTextArray(raw.examples);
+    examplePrompt = examples.length > 0 ? examples[0] : '';
+  }
+  return {
+    skillName: skillName,
+    skillId: skillId,
+    goal: firstNonEmpty(raw.goal, raw.description),
+    scenarios: normalizeSkillTextArray(raw.scenarios),
+    inputFields: normalizeSkillFields(raw.inputFields),
+    flow: normalizeSkillTextArray(Array.isArray(raw.flow) ? raw.flow : raw.workflow),
+    outputs: normalizeSkillTextArray(Array.isArray(raw.outputs) ? raw.outputs : raw.outputFields),
+    rules: normalizeSkillTextArray(Array.isArray(raw.rules) ? raw.rules : raw.constraints),
+    actions: normalizeSkillTextArray(raw.actions),
+    examplePrompt: examplePrompt
+  };
+}
+
+function normalizeSkillFields(values: RawSkillFieldSpec[] | undefined): SkillFieldSpec[] {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  let fields: SkillFieldSpec[] = [];
+  for (let i: number = 0; i < values.length; i++) {
+    let raw: RawSkillFieldSpec = values[i];
+    let id: string = typeof raw.id === 'string' ? raw.id.trim() : '';
+    let label: string = firstNonEmpty(raw.label, raw.name);
+    if (id.length === 0) {
+      id = 'field' + (i + 1).toString();
+    }
+    if (label.length === 0) {
+      label = id;
+    }
+    fields.push({
+      id: id,
+      label: label,
+      placeholder: firstNonEmpty(raw.placeholder, raw.description),
+      required: raw.required === true
+    });
+  }
+  return fields;
+}
+
+function normalizeSkillTextArray(values: string[] | undefined): string[] {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  let result: string[] = [];
+  for (let i: number = 0; i < values.length; i++) {
+    let value: string = values[i];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      result.push(value.trim());
+      continue;
+    }
+    let objectValue: RawSkillTextObject = JSON.parse(JSON.stringify(value)) as RawSkillTextObject;
+    let text: string = firstNonEmpty(objectValue.step, objectValue.label);
+    text = firstNonEmpty(text, objectValue.name);
+    text = firstNonEmpty(text, objectValue.description);
+    text = firstNonEmpty(text, objectValue.action);
+    text = firstNonEmpty(text, objectValue.output);
+    text = firstNonEmpty(text, objectValue.example);
+    text = firstNonEmpty(text, objectValue.id);
+    if (text.length > 0) {
+      result.push(text);
+    }
+  }
+  return result;
+}
+
+function firstNonEmpty(primary: string | undefined, secondary: string | undefined): string {
+  if (typeof primary === 'string' && primary.trim().length > 0) {
+    return primary.trim();
+  }
+  return typeof secondary === 'string' ? secondary.trim() : '';
+}
+
+function cleanSkillJson(raw: string): string {
+  let cleaned: string = raw.replace('```json', '').replace('```', '').trim();
+  let start: number = cleaned.indexOf('{');
+  let end: number = cleaned.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    return cleaned.substring(start, end + 1);
+  }
+  return cleaned;
 }
 
 export function createTravelInputs(): TravelInputs {
@@ -87,23 +221,28 @@ export function createTravelInputs(): TravelInputs {
 
 export function createSkillSession(spec: SkillSpec): SkillSessionState {
   let now: string = new Date().toLocaleString();
+  let cards: SkillCard[] = compileSkillCards(spec);
   return {
     sessionId: 'skill-' + Date.now().toString(),
     skillSpec: spec,
-    cards: compileSkillCards(spec),
-    activeCardId: 'skill_overview',
+    cards: cards,
+    activeCardId: cards[0].id,
     inputs: createTravelInputs(),
+    fieldValues: createSkillInputValues(spec),
     toolResults: [],
     finalPlan: '',
     progress: 0,
     status: 'collecting',
-    nextAction: '确认 Skill 并填写旅行参数',
+    nextAction: spec.skillId === 'TRAVEL_PLANNER_V1' ? '确认 Skill 并填写旅行参数' : '确认 Skill 并填写输入',
     updatedAt: now,
     errorMessage: ''
   };
 }
 
 export function compileSkillCards(spec: SkillSpec): SkillCard[] {
+  if (spec.skillId !== 'TRAVEL_PLANNER_V1') {
+    return compileGenericSkillCards(spec);
+  }
   return [
     makeCard('skill_overview', 'overview', spec.skillName, spec.skillId, spec.goal, [], ['开始填写']),
     makeCard('input_departure_destination', 'input', '出发与目的地', '第一步', '填写出发地和目的地。', ['departure', 'destination'], ['下一步']),
@@ -117,6 +256,39 @@ export function compileSkillCards(spec: SkillSpec): SkillCard[] {
     makeCard('checklist_card', 'result', '出行清单', 'travel.generateChecklist', '等待 Agent 生成。', [], ['生成最终方案', '编辑输入']),
     makeCard('final_plan_card', 'final', '最终旅行方案', spec.skillName, '等待输出完整方案。', [], ['加到桌面', '重新生成'])
   ];
+}
+
+function compileGenericSkillCards(spec: SkillSpec): SkillCard[] {
+  let cards: SkillCard[] = [
+    makeCard('skill_overview', 'overview', spec.skillName, spec.skillId, spec.goal, [], ['开始'])
+  ];
+  if (spec.inputFields.length > 0) {
+    let fieldIds: string[] = [];
+    for (let i: number = 0; i < spec.inputFields.length; i++) {
+      fieldIds.push(spec.inputFields[i].id);
+    }
+    cards.push(makeCard('skill_inputs', 'input', '输入信息', spec.skillName,
+      '填写图片中识别出的 Skill 输入字段。', fieldIds, ['继续', '返回']));
+  }
+  if (spec.flow.length > 0) {
+    cards.push(makeCard('skill_flow', 'progress', '执行流程', spec.flow.length.toString() + ' 步',
+      spec.flow.join('\n'), [], ['继续', '返回']));
+  }
+  if (spec.outputs.length > 0) {
+    cards.push(makeCard('skill_outputs', 'result', '预期输出', spec.skillName,
+      spec.outputs.join('\n'), [], ['完成', '返回']));
+  }
+  cards.push(makeCard('skill_complete', 'final', spec.skillName, spec.skillId,
+    'Skill 已识别并生成通用交互界面。', [], ['重新开始']));
+  return cards;
+}
+
+function createSkillInputValues(spec: SkillSpec): SkillInputValue[] {
+  let values: SkillInputValue[] = [];
+  for (let i: number = 0; i < spec.inputFields.length; i++) {
+    values.push({ id: spec.inputFields[i].id, value: '' });
+  }
+  return values;
 }
 
 function makeCard(id: string, kind: string, title: string, subtitle: string, body: string, fields: string[],
@@ -206,6 +378,9 @@ export function runTravelTool(toolName: string, inputs: TravelInputs): ToolResul
 }
 
 export function advanceSkillSession(session: SkillSessionState, actionId: string): SkillSessionState {
+  if (session.skillSpec.skillId !== 'TRAVEL_PLANNER_V1') {
+    return advanceGenericSkillSession(session, actionId);
+  }
   let next: SkillSessionState = cloneSession(session);
   next.errorMessage = '';
   if (actionId === '返回') {
@@ -267,6 +442,78 @@ export function advanceSkillSession(session: SkillSessionState, actionId: string
   }
   runNextTravelStep(next);
   return touch(next);
+}
+
+function advanceGenericSkillSession(session: SkillSessionState, actionId: string): SkillSessionState {
+  let next: SkillSessionState = cloneSession(session);
+  next.errorMessage = '';
+  if (!Array.isArray(next.fieldValues)) {
+    next.fieldValues = createSkillInputValues(next.skillSpec);
+  }
+  if (actionId === '重新开始') {
+    next.activeCardId = next.cards[0].id;
+    next.progress = 0;
+    next.status = 'collecting';
+    next.nextAction = '确认 Skill';
+    return touch(next);
+  }
+  let currentIndex: number = activeCardIndex(next);
+  if (actionId === '返回') {
+    currentIndex = currentIndex > 0 ? currentIndex - 1 : 0;
+    next.activeCardId = next.cards[currentIndex].id;
+    next.nextAction = '继续上一步';
+    return touch(next);
+  }
+  if (next.activeCardId === 'skill_inputs') {
+    let missing: string[] = missingRequiredSkillFields(next);
+    if (missing.length > 0) {
+      next.status = 'error';
+      next.errorMessage = '请填写：' + missing.join('、');
+      next.nextAction = '补齐必填字段';
+      return touch(next);
+    }
+  }
+  let nextIndex: number = currentIndex + 1;
+  if (nextIndex >= next.cards.length) {
+    nextIndex = next.cards.length - 1;
+  }
+  next.activeCardId = next.cards[nextIndex].id;
+  next.progress = Math.round(nextIndex * 100 / (next.cards.length - 1));
+  next.status = nextIndex === next.cards.length - 1 ? 'complete' : 'running';
+  next.nextAction = next.status === 'complete' ? 'Skill 已完成' : '继续';
+  return touch(next);
+}
+
+function activeCardIndex(session: SkillSessionState): number {
+  for (let i: number = 0; i < session.cards.length; i++) {
+    if (session.cards[i].id === session.activeCardId) {
+      return i;
+    }
+  }
+  return 0;
+}
+
+function missingRequiredSkillFields(session: SkillSessionState): string[] {
+  let missing: string[] = [];
+  for (let i: number = 0; i < session.skillSpec.inputFields.length; i++) {
+    let field: SkillFieldSpec = session.skillSpec.inputFields[i];
+    if (field.required && skillInputValue(session, field.id).trim().length === 0) {
+      missing.push(field.label);
+    }
+  }
+  return missing;
+}
+
+function skillInputValue(session: SkillSessionState, fieldId: string): string {
+  if (!Array.isArray(session.fieldValues)) {
+    return '';
+  }
+  for (let i: number = 0; i < session.fieldValues.length; i++) {
+    if (session.fieldValues[i].id === fieldId) {
+      return session.fieldValues[i].value;
+    }
+  }
+  return '';
 }
 
 export function applyWhitelistedTravelTool(session: SkillSessionState, toolName: string): SkillSessionState {
@@ -422,39 +669,73 @@ export async function pickFileSystemImageAsDataUrl(context: common.UIAbilityCont
   return readUriAsDataUrl(uris[0]);
 }
 
-function readUriAsDataUrl(uri: string): string {
+export async function pickSkillMarkdownFile(context: common.UIAbilityContext): Promise<SkillMarkdownFile> {
+  let options: picker.DocumentSelectOptions = new picker.DocumentSelectOptions();
+  options.maxSelectNumber = 1;
+  options.fileSuffixFilters = ['.md'];
+  let documentPicker: picker.DocumentViewPicker = new picker.DocumentViewPicker(context);
+  let uris: string[] = await documentPicker.select(options);
+  if (uris.length === 0) {
+    throw new Error('未选择 skill.md 文件');
+  }
+  let uri: string = uris[0];
+  let nameStart: number = uri.lastIndexOf('/');
+  let displayName: string = nameStart >= 0 ? uri.substring(nameStart + 1) : 'skill.md';
+  return {
+    displayName: displayName,
+    content: readUriAsUtf8Text(uri)
+  };
+}
+
+function readUriAsUtf8Text(uri: string): string {
   let file: fileIo.File = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
   try {
     let stat: fileIo.Stat = fileIo.statSync(file.fd);
+    if (stat.size <= 0) {
+      throw new Error('skill.md 文件为空');
+    }
+    if (stat.size > 1024 * 1024) {
+      throw new Error('skill.md 不能超过 1 MB');
+    }
     let buffer: ArrayBuffer = new ArrayBuffer(stat.size);
     let readLen: number = fileIo.readSync(file.fd, buffer);
     let bytes: Uint8Array = new Uint8Array(buffer, 0, readLen);
-    return 'data:image/png;base64,' + encodeBase64(bytes);
+    let decoder: util.TextDecoder = util.TextDecoder.create('utf-8', { fatal: false, ignoreBOM: true });
+    return decoder.decodeToString(bytes).trim();
   } finally {
     fileIo.closeSync(file);
   }
 }
 
-function encodeBase64(bytes: Uint8Array): string {
-  let output: string = '';
-  let i: number = 0;
-  while (i < bytes.length) {
-    let b1: number = bytes[i++];
-    let b2: number = i < bytes.length ? bytes[i++] : -1;
-    let b3: number = i < bytes.length ? bytes[i++] : -1;
-    output += BASE64_CHARS.charAt(b1 >> 2);
-    if (b2 < 0) {
-      output += BASE64_CHARS.charAt((b1 & 3) << 4) + '==';
-    } else if (b3 < 0) {
-      output += BASE64_CHARS.charAt(((b1 & 3) << 4) | (b2 >> 4));
-      output += BASE64_CHARS.charAt((b2 & 15) << 2) + '=';
-    } else {
-      output += BASE64_CHARS.charAt(((b1 & 3) << 4) | (b2 >> 4));
-      output += BASE64_CHARS.charAt(((b2 & 15) << 2) | (b3 >> 6));
-      output += BASE64_CHARS.charAt(b3 & 63);
+function readUriAsDataUrl(uri: string): string {
+  let file: fileIo.File = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+  try {
+    let stat: fileIo.Stat = fileIo.statSync(file.fd);
+    if (stat.size > 10 * 1024 * 1024) {
+      throw new Error('图片不能超过 10 MB');
     }
+    let buffer: ArrayBuffer = new ArrayBuffer(stat.size);
+    let readLen: number = fileIo.readSync(file.fd, buffer);
+    let bytes: Uint8Array = new Uint8Array(buffer, 0, readLen);
+    let base64Helper: util.Base64Helper = new util.Base64Helper();
+    return 'data:' + detectImageMime(bytes) + ';base64,' + base64Helper.encodeToStringSync(bytes, util.Type.BASIC);
+  } finally {
+    fileIo.closeSync(file);
   }
-  return output;
+}
+
+function detectImageMime(bytes: Uint8Array): string {
+  if (bytes.length >= 4 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) {
+    return 'image/png';
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) {
+    return 'image/jpeg';
+  }
+  if (bytes.length >= 12 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) {
+    return 'image/webp';
+  }
+  throw new Error('仅支持 PNG、JPEG 或 WebP 图片');
 }
 
 function cloneSession(session: SkillSessionState): SkillSessionState {

@@ -2,13 +2,17 @@ import { http } from '@kit.NetworkKit';
 import { GlmChatPayload, GlmChatResponse, GlmContentPart, GlmLocalConfig, GlmMessage } from './A2uiTypes';
 import { AgentTurnRequest } from './SkillTypes';
 import { AppBlueprint, RuntimeAgentTurnRequest, SkillManifest, SkillSource } from './SkillAppTypes';
+import { GLM_API_KEY } from '../config/GlmLocalSecrets';
 
 export const GLM_CODING_ENDPOINT: string = 'https://open.bigmodel.cn/api/coding/paas/v4';
+export const GLM_GENERAL_ENDPOINT: string = 'https://open.bigmodel.cn/api/paas/v4';
 const CHAT_COMPLETIONS_PATH: string = '/chat/completions';
 export const GLM_DEFAULT_MODEL: string = 'glm-5.2';
 export const GLM_ALTERNATE_MODEL: string = 'glm-5-turbo';
-// TODO(MVP-next): Replace manual entry with a HUKS-backed CredentialVault reference.
-export const GLM_LOCAL_API_KEY: string = '';
+export const GLM_VISION_MODEL: string = 'glm-4.6v-flash';
+export const GLM_VISION_FALLBACK_MODEL: string = 'glm-4v-flash';
+export const GLM_LOCAL_API_KEY: string = GLM_API_KEY;
+export const GLM_REQUEST_TIMEOUT_MS: number = 120000;
 
 const SYSTEM_PROMPT: string =
   'You generate A2UI v0.9 JSONL only. Return one createSurface message and one updateDataModel message. ' +
@@ -17,7 +21,8 @@ const SYSTEM_PROMPT: string =
 const SKILL_IMAGE_SYSTEM_PROMPT: string =
   'You extract an Agent Skill card image into strict JSON only. No markdown. ' +
   'Return fields: skillName, skillId, goal, scenarios, inputFields, flow, outputs, rules, actions, examplePrompt. ' +
-  'inputFields items must be {id,label,placeholder,required}. Use stable camelCase ids.';
+  'inputFields items must be {id,label,placeholder,required}. Use stable camelCase field ids. ' +
+  'Do not assume a travel domain or any fixed skillId. Derive a stable uppercase skillId from the actual image.';
 
 const AGENT_TURN_SYSTEM_PROMPT: string =
   'You are a card-state agent orchestrator. Return strict JSON only with fields: assistantText, toolCalls, cardPatchesJson, activeCardId, status. ' +
@@ -37,11 +42,18 @@ const SKILL_MANIFEST_SYSTEM_PROMPT: string =
   'inputFields items contain id,label,kind,required,options. toolContracts items contain name,description,adapterId,inputFields,outputFields,allowedOrigins,credentialRef,confirmation,implemented. ' +
   'Never include a secret. Mark tools implemented=false unless the source maps to an explicitly registered local adapter.';
 
+const VISUAL_SKILL_MANIFEST_SYSTEM_PROMPT: string = SKILL_MANIFEST_SYSTEM_PROMPT +
+  ' The Skill source is an image. Read all visible headings, labels, fields, workflow steps, rules, examples, and agent actions. ' +
+  'Infer only what is supported by the image. Preserve the image language. Use stable camelCase input ids and namespaced tool names. ' +
+  'Return every required field even when its value is an empty array.';
+
 const APP_BLUEPRINT_SYSTEM_PROMPT: string =
   'Act as a product designer. Return strict AppBlueprint JSON only. No markdown, URLs, colors outside palette, or code. ' +
   'Return schemaVersion,appId,skillId,title,summary,homePattern,palette,runtimePrompt,dynamicSlots,componentRecipes,nestedApp. ' +
   'nestedApp is a multi-page NestedAppSpec. Allowed node kinds: heroMedia,glassPanel,sectionHeader,formField,choiceChips,timeline,metric,mediaGallery,actionBar,statusBanner,resultList,dataChart,compareTable,entityPicker,conversationPanel,credentialForm,dynamicSlot. ' +
   'Allowed actions: navigate,back,invokeAgent,pickLocalImage,reset. Each action may set handling to local,agent,localThenAgent. ' +
+  'Every page requires id,title,subtitle,nodes. Every node requires id,kind,title,text,binding,assetId,items,actions,tone. ' +
+  'Every action requires id,label,kind,targetPageId,payload,handling. ' +
   'Prefer tap choices and suggested actions over keyboard input. Only reference supplied local asset ids.';
 
 const RUNTIME_AGENT_SYSTEM_PROMPT: string =
@@ -50,48 +62,18 @@ const RUNTIME_AGENT_SYSTEM_PROMPT: string =
   'Use only supplied dynamicSlotIds. Return 2 to 4 suggestedActions. Never request or expose credentials.';
 
 export async function requestA2uiDslFromGlm(prompt: string, config: GlmLocalConfig): Promise<string> {
-  let client: http.HttpRequest = http.createHttp();
   let messages: GlmMessage[] = [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: prompt }
   ];
-
-  let payload: GlmChatPayload = {
-    model: config.model,
-    messages: messages,
-    temperature: 0.2,
-    stream: false
-  };
-
-  try {
-    let requestUrl: string = resolveChatCompletionsUrl(config.baseUrl);
-    let response: http.HttpResponse = await client.request(requestUrl, {
-      method: http.RequestMethod.POST,
-      header: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + config.apiKey
-      },
-      extraData: JSON.stringify(payload),
-      expectDataType: http.HttpDataType.STRING,
-      connectTimeout: 15000,
-      readTimeout: 30000
-    });
-
-    let body: string = response.result as string;
-    if (response.responseCode < 200 || response.responseCode >= 300) {
-      throw new Error('GLM HTTP ' + response.responseCode.toString() + ': ' + body);
-    }
-    return extractContent(body);
-  } finally {
-    client.destroy();
-  }
+  return requestChatContent(messages, config, 0.2);
 }
 
 export async function requestSkillSpecFromGlmImage(imageDataUrl: string, config: GlmLocalConfig): Promise<string> {
   let parts: GlmContentPart[] = [
     {
       type: 'text',
-      text: 'Extract this image as TRAVEL_PLANNER_V1 SkillSpec JSON. Preserve Chinese labels from the image.'
+      text: 'Extract the actual Skill shown in this image as domain-independent SkillSpec JSON. Preserve visible labels and do not substitute a demo Skill.'
     },
     {
       type: 'image_url',
@@ -141,6 +123,27 @@ export async function requestSkillManifestFromGlm(source: SkillSource, config: G
   return requestChatContent(messages, config, 0.15);
 }
 
+export async function requestSkillManifestFromGlmImage(imageDataUrl: string, localAssetIds: string[],
+  config: GlmLocalConfig): Promise<string> {
+  let parts: GlmContentPart[] = [
+    {
+      type: 'image_url',
+      image_url: {
+        url: imageDataUrl
+      }
+    },
+    {
+      type: 'text',
+      text: 'Analyze this Skill image and return SkillManifest JSON. Local asset ids: ' + JSON.stringify(localAssetIds)
+    }
+  ];
+  let messages: GlmMessage[] = [
+    { role: 'system', content: VISUAL_SKILL_MANIFEST_SYSTEM_PROMPT },
+    { role: 'user', content: parts }
+  ];
+  return requestChatContent(messages, config, 0.1, 120000);
+}
+
 export async function requestAppBlueprintFromGlm(manifest: SkillManifest, localAssetIds: string[],
   config: GlmLocalConfig): Promise<string> {
   let manifestPayload: AppBlueprintRequest = {
@@ -151,7 +154,7 @@ export async function requestAppBlueprintFromGlm(manifest: SkillManifest, localA
     { role: 'system', content: APP_BLUEPRINT_SYSTEM_PROMPT },
     { role: 'user', content: JSON.stringify(manifestPayload) }
   ];
-  return requestChatContent(messages, config, 0.4);
+  return requestChatContent(messages, config, 0.4, 120000);
 }
 
 export async function requestNestedRuntimeTurnFromGlm(turn: RuntimeAgentTurnRequest,
@@ -168,7 +171,8 @@ interface AppBlueprintRequest {
   localAssetIds: string[];
 }
 
-async function requestChatContent(messages: GlmMessage[], config: GlmLocalConfig, temperature: number): Promise<string> {
+async function requestChatContent(messages: GlmMessage[], config: GlmLocalConfig, temperature: number,
+  readTimeout: number = GLM_REQUEST_TIMEOUT_MS): Promise<string> {
   let client: http.HttpRequest = http.createHttp();
   let payload: GlmChatPayload = {
     model: config.model,
@@ -179,26 +183,64 @@ async function requestChatContent(messages: GlmMessage[], config: GlmLocalConfig
 
   try {
     let requestUrl: string = resolveChatCompletionsUrl(config.baseUrl);
-    let response: http.HttpResponse = await client.request(requestUrl, {
-      method: http.RequestMethod.POST,
-      header: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + config.apiKey
-      },
-      extraData: JSON.stringify(payload),
-      expectDataType: http.HttpDataType.STRING,
-      connectTimeout: 15000,
-      readTimeout: 45000
-    });
+    let extraData: string = JSON.stringify(payload);
+    let maxAttempts: number = config.model === GLM_VISION_MODEL ? 4 : 2;
+    let timeoutMs: number = readTimeout > GLM_REQUEST_TIMEOUT_MS ? GLM_REQUEST_TIMEOUT_MS : readTimeout;
+    let deadline: number = Date.now() + timeoutMs;
+    for (let attempt: number = 1; attempt <= maxAttempts; attempt++) {
+      let remainingMs: number = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new Error('GLM 请求 120 秒未返回，工作流已终止。');
+      }
+      let response: http.HttpResponse;
+      try {
+        response = await client.request(requestUrl, {
+          method: http.RequestMethod.POST,
+          header: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + config.apiKey
+          },
+          extraData: extraData,
+          expectDataType: http.HttpDataType.STRING,
+          connectTimeout: 15000,
+          readTimeout: remainingMs
+        });
+      } catch (error) {
+        let err: Error = error as Error;
+        let message: string = typeof err.message === 'string' ? err.message.toLowerCase() : '';
+        if (Date.now() >= deadline || message.indexOf('timeout') >= 0) {
+          throw new Error('GLM 请求 120 秒未返回，工作流已终止。');
+        }
+        throw new Error('GLM 请求失败：' + err.message);
+      }
 
-    let body: string = response.result as string;
-    if (response.responseCode < 200 || response.responseCode >= 300) {
-      throw new Error('GLM HTTP ' + response.responseCode.toString() + ': ' + body);
+      let body: string = response.result as string;
+      if (response.responseCode >= 200 && response.responseCode < 300) {
+        return extractContent(body);
+      }
+      if (!isRetryableResponse(response.responseCode) || attempt === maxAttempts) {
+        throw new Error('GLM HTTP ' + response.responseCode.toString() + ': ' + body);
+      }
+      let retryDelay: number = 1500 * attempt * attempt;
+      if (Date.now() + retryDelay >= deadline) {
+        throw new Error('GLM 请求 120 秒未返回，工作流已终止。');
+      }
+      await waitForRetry(retryDelay);
     }
-    return extractContent(body);
+    throw new Error('GLM 请求未完成');
   } finally {
     client.destroy();
   }
+}
+
+function isRetryableResponse(responseCode: number): boolean {
+  return responseCode === 408 || responseCode === 429 || responseCode >= 500;
+}
+
+async function waitForRetry(delayMs: number): Promise<void> {
+  await new Promise<void>((resolve: () => void) => {
+    setTimeout(resolve, delayMs);
+  });
 }
 
 function resolveChatCompletionsUrl(baseUrl: string): string {

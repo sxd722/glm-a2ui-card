@@ -7,7 +7,7 @@ import {
   NestedNodeKind,
   NestedPageSpec
 } from './NestedAppTypes';
-import { defaultTravelNestedApp, normalizeNestedApp } from './NestedAppService';
+import { defaultTravelNestedApp, isValidNestedAppSpec, normalizeNestedApp } from './NestedAppService';
 import {
   AppBlueprint,
   ComponentRecipe,
@@ -72,7 +72,7 @@ export function normalizeSkillManifest(raw: string, fallback: SkillManifest): Sk
   try {
     let manifest: SkillManifest = JSON.parse(cleanJson(raw)) as SkillManifest;
     if (isValidManifest(manifest)) {
-      return manifest;
+      return sanitizeSkillManifest(manifest, fallback);
     }
   } catch (e) {
   }
@@ -341,15 +341,176 @@ function runtimePrompt(manifest: SkillManifest): string {
 
 function isValidManifest(manifest: SkillManifest): boolean {
   return manifest !== undefined && manifest !== null && typeof manifest.skillId === 'string' &&
-    typeof manifest.skillName === 'string' && manifest.skillId.length > 0 && manifest.skillName.length > 0 &&
-    Array.isArray(manifest.inputFields) && Array.isArray(manifest.toolContracts) && Array.isArray(manifest.workflow);
+    typeof manifest.skillName === 'string' && manifest.skillId.length > 0 && manifest.skillName.length > 0;
+}
+
+interface ManifestTextObject {
+  id?: string;
+  label?: string;
+  name?: string;
+  step?: string;
+  description?: string;
+  input?: string;
+  output?: string;
+  action?: string;
+  point?: string;
+  example?: string;
+  response?: string;
+}
+
+interface ManifestInputObject {
+  id?: string;
+  label?: string;
+  kind?: string;
+  type?: string;
+  required?: boolean;
+  options?: string[];
+}
+
+function sanitizeSkillManifest(manifest: SkillManifest, fallback: SkillManifest): SkillManifest {
+  if (typeof manifest.schemaVersion !== 'string' || manifest.schemaVersion.length === 0) {
+    manifest.schemaVersion = fallback.schemaVersion;
+  }
+  if (typeof manifest.version !== 'string' || manifest.version.length === 0) {
+    manifest.version = '1';
+  }
+  if (typeof manifest.description !== 'string') {
+    manifest.description = '';
+  }
+  manifest.inputFields = normalizeManifestInputFields(manifest.inputFields);
+  if (!Array.isArray(manifest.toolContracts)) {
+    manifest.toolContracts = [];
+  }
+  manifest.goals = normalizeManifestTextArray(manifest.goals);
+  manifest.outputFields = normalizeManifestTextArray(manifest.outputFields);
+  manifest.workflow = normalizeManifestTextArray(manifest.workflow);
+  manifest.decisionPoints = normalizeManifestTextArray(manifest.decisionPoints);
+  manifest.permissions = normalizeManifestTextArray(manifest.permissions);
+  manifest.constraints = normalizeManifestTextArray(manifest.constraints);
+  manifest.examples = normalizeManifestTextArray(manifest.examples);
+  for (let i: number = 0; i < manifest.toolContracts.length; i++) {
+    let tool: ToolContract = manifest.toolContracts[i];
+    if (!Array.isArray(tool.inputFields)) {
+      tool.inputFields = [];
+    }
+    if (!Array.isArray(tool.outputFields)) {
+      tool.outputFields = [];
+    }
+    if (!Array.isArray(tool.allowedOrigins)) {
+      tool.allowedOrigins = [];
+    }
+    tool.implemented = false;
+  }
+  if (manifest.skillId === fallback.skillId && hasImplementedTool(fallback.toolContracts)) {
+    manifest.toolContracts = fallback.toolContracts;
+  }
+  return manifest;
+}
+
+function normalizeManifestInputFields(values: SkillInputField[]): SkillInputField[] {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  let normalized: SkillInputField[] = [];
+  for (let i: number = 0; i < values.length; i++) {
+    let raw: ManifestInputObject = JSON.parse(JSON.stringify(values[i])) as ManifestInputObject;
+    let id: string = typeof raw.id === 'string' && raw.id.length > 0 ? raw.id : 'field' + i.toString();
+    let label: string = typeof raw.label === 'string' && raw.label.length > 0 ? raw.label : id;
+    let kind: string = typeof raw.kind === 'string' && raw.kind.length > 0 ? raw.kind : '';
+    if (kind.length === 0 && typeof raw.type === 'string') {
+      kind = raw.type;
+    }
+    if (kind.length === 0) {
+      kind = 'text';
+    }
+    let options: string[] = [];
+    if (Array.isArray(raw.options)) {
+      options = normalizeManifestTextArray(raw.options);
+    }
+    normalized.push({
+      id: id,
+      label: label,
+      kind: kind,
+      required: raw.required === true,
+      options: options
+    });
+  }
+  return normalized;
+}
+
+function hasImplementedTool(tools: ToolContract[]): boolean {
+  for (let i: number = 0; i < tools.length; i++) {
+    if (tools[i].implemented) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function normalizeManifestTextArray(values: string[]): string[] {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  let normalized: string[] = [];
+  for (let i: number = 0; i < values.length; i++) {
+    let value: string = values[i];
+    if (typeof value === 'string') {
+      if (value.trim().length > 0) {
+        normalized.push(value.trim());
+      }
+      continue;
+    }
+    let objectValue: ManifestTextObject = JSON.parse(JSON.stringify(value)) as ManifestTextObject;
+    let summary: string = manifestObjectSummary(objectValue);
+    if (summary.length > 0) {
+      normalized.push(summary);
+    }
+  }
+  return normalized;
+}
+
+function manifestObjectSummary(value: ManifestTextObject): string {
+  if (typeof value.step === 'string' && value.step.length > 0) {
+    if (typeof value.action === 'string' && value.action.length > 0 && value.action !== value.step) {
+      return value.step + '：' + value.action;
+    }
+    return value.step;
+  }
+  if (typeof value.point === 'string' && value.point.length > 0) {
+    if (typeof value.action === 'string' && value.action.length > 0 && value.action !== value.point) {
+      return value.point + '：' + value.action;
+    }
+    return value.point;
+  }
+  if (typeof value.example === 'string' && value.example.length > 0) {
+    return value.example;
+  }
+  if (typeof value.label === 'string' && value.label.length > 0) {
+    return value.label;
+  }
+  if (typeof value.description === 'string' && value.description.length > 0) {
+    return value.description;
+  }
+  if (typeof value.input === 'string' && value.input.length > 0) {
+    if (typeof value.output === 'string' && value.output.length > 0) {
+      return value.input + ' -> ' + value.output;
+    }
+    return value.input;
+  }
+  if (typeof value.name === 'string' && value.name.length > 0) {
+    return value.name;
+  }
+  if (typeof value.id === 'string') {
+    return value.id;
+  }
+  return '';
 }
 
 function isValidBlueprint(blueprint: AppBlueprint): boolean {
   return blueprint !== undefined && blueprint !== null && typeof blueprint.appId === 'string' &&
     typeof blueprint.skillId === 'string' && typeof blueprint.title === 'string' && blueprint.appId.length > 0 &&
     blueprint.nestedApp !== undefined && blueprint.nestedApp !== null && Array.isArray(blueprint.nestedApp.pages) &&
-    blueprint.nestedApp.pages.length > 0;
+    blueprint.nestedApp.pages.length > 0 && isValidNestedAppSpec(blueprint.nestedApp);
 }
 
 function credentialRefs(manifest: SkillManifest): string[] {
@@ -364,7 +525,13 @@ function credentialRefs(manifest: SkillManifest): string[] {
 }
 
 function cleanJson(raw: string): string {
-  return raw.replace('```json', '').replace('```', '').trim();
+  let cleaned: string = raw.replace('```json', '').replace('```', '').trim();
+  let start: number = cleaned.indexOf('{');
+  let end: number = cleaned.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    return cleaned.substring(start, end + 1);
+  }
+  return cleaned;
 }
 
 function cloneDraft(draft: ForgeDraft): ForgeDraft {

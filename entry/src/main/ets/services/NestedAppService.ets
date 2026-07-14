@@ -70,7 +70,7 @@ export function createNestedSession(app: NestedAppSpec): NestedSessionState {
 export function normalizeNestedApp(raw: string): NestedAppSpec {
   try {
     let app: NestedAppSpec = JSON.parse(raw.replace('```json', '').replace('```', '').trim()) as NestedAppSpec;
-    if (isValidNestedApp(app)) {
+    if (isValidNestedAppSpec(app)) {
       return app;
     }
   } catch (e) {
@@ -146,7 +146,7 @@ function applyTravelDemoAgent(session: NestedSessionState): void {
   session.agentTrace = 'Agent 已执行本地旅行工具：行程、预算、清单。';
 }
 
-function isValidNestedApp(app: NestedAppSpec): boolean {
+export function isValidNestedAppSpec(app: NestedAppSpec): boolean {
   if (app === undefined || app === null || typeof app.appId !== 'string' || typeof app.title !== 'string' ||
     typeof app.subtitle !== 'string' || typeof app.initialPageId !== 'string' || !Array.isArray(app.pages) ||
     app.appId.length === 0 || app.pages.length === 0 || app.initialPageId.length === 0) {
