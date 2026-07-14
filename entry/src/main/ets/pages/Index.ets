@@ -14,6 +14,7 @@ import {
   pickFileSystemImageAsDataUrl,
   pickImageAsDataUrl,
   pickSkillMarkdownFile,
+  readImageFileAsDataUrl,
   saveSkillSession,
   skillSessionToCardPreview,
   TRAVEL_TOOL_NAMES
@@ -60,6 +61,15 @@ import {
 import { AppBlueprint, ForgeDraft, RuntimeAgentTurnRequest, RuntimeAgentTurnResult, SkillSource, ToolContract } from '../services/SkillAppTypes';
 import { applyRuntimeAgentTurn, buildRuntimeAgentTurnRequest, normalizeRuntimeAgentTurnResult } from '../services/NestedAgentRuntime';
 import { saveForgeDraft, saveInstalledNestedApp } from '../services/SkillAppStore';
+import {
+  HDC_DEBUG_EVENT,
+  HdcDebugCommand,
+  HdcDebugResult,
+  HdcDebugSnapshot,
+  recordHdcDebugResult,
+  runningHdcDebugResult,
+  takeNextHdcDebugCommand
+} from '../services/HdcDebugBridge';
 
 @Entry
 @Component
@@ -91,9 +101,21 @@ struct Index {
   @State nestedSession: NestedSessionState = createNestedSession(defaultTravelNestedApp());
   @State nestedDslText: string = '';
   private context: common.UIAbilityContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+  private hdcDebugRunning: boolean = false;
+  private hdcImageChunks: Record<string, string> = {};
+  private hdcImageChunkTotal: number = 0;
+  private hdcDebugListener: () => void = (): void => {
+    this.drainHdcDebugCommands();
+  };
 
   aboutToAppear(): void {
     this.preview = projectDslToCardPreview(this.dslText);
+    this.context.eventHub.on(HDC_DEBUG_EVENT, this.hdcDebugListener);
+    this.drainHdcDebugCommands();
+  }
+
+  aboutToDisappear(): void {
+    this.context.eventHub.off(HDC_DEBUG_EVENT, this.hdcDebugListener);
   }
 
   build() {
@@ -1462,10 +1484,10 @@ struct Index {
       return await requestSkillManifestFromGlmImage(imageDataUrl, assetIds, primaryConfig);
     } catch (error) {
       let err: BusinessError = error as BusinessError;
-      if (err.message.indexOf('GLM HTTP 429') < 0) {
+      if (err.message.indexOf('120 秒') >= 0) {
         throw new Error(err.message);
       }
-      this.statusText = GLM_VISION_MODEL + ' 当前拥塞，正在切换免费视觉降级模型 ' + GLM_VISION_FALLBACK_MODEL + '...';
+      this.statusText = GLM_VISION_MODEL + ' 连接或模型不兼容，正在切换视觉降级模型 ' + GLM_VISION_FALLBACK_MODEL + '...';
       let fallbackConfig: GlmLocalConfig = {
         baseUrl: GLM_GENERAL_ENDPOINT,
         apiKey: this.apiKey,
@@ -1591,6 +1613,341 @@ struct Index {
     this.nestedDslText = '';
   }
 
+  private async drainHdcDebugCommands(): Promise<void> {
+    if (this.hdcDebugRunning) {
+      return;
+    }
+    this.hdcDebugRunning = true;
+    let command: HdcDebugCommand | undefined = takeNextHdcDebugCommand();
+    while (command !== undefined) {
+      await this.executeHdcDebugCommand(command);
+      command = takeNextHdcDebugCommand();
+    }
+    this.hdcDebugRunning = false;
+  }
+
+  private async executeHdcDebugCommand(command: HdcDebugCommand): Promise<void> {
+    let startedAt: number = Date.now();
+    recordHdcDebugResult(runningHdcDebugResult(command, this.hdcDebugSnapshot()));
+    try {
+      await this.dispatchHdcDebugCommand(command);
+      let result: HdcDebugResult = {
+        requestId: command.requestId,
+        action: command.action,
+        status: 'succeeded',
+        message: 'command completed',
+        startedAt: startedAt,
+        finishedAt: Date.now(),
+        snapshot: this.hdcDebugSnapshot()
+      };
+      recordHdcDebugResult(result);
+    } catch (error) {
+      let err: Error = error as Error;
+      let message: string = typeof err.message === 'string' ? err.message : 'command failed';
+      this.statusText = '[HDC] ' + message;
+      let result: HdcDebugResult = {
+        requestId: command.requestId,
+        action: command.action,
+        status: 'failed',
+        message: trimDebugText(message),
+        startedAt: startedAt,
+        finishedAt: Date.now(),
+        snapshot: this.hdcDebugSnapshot()
+      };
+      recordHdcDebugResult(result);
+    }
+  }
+
+  private async dispatchHdcDebugCommand(command: HdcDebugCommand): Promise<void> {
+    switch (command.action) {
+      case 'setForgeSource':
+        this.setForgeSourceFromDebug(command.payload);
+        return;
+      case 'runForgeAnalyze':
+        this.workspaceMode = 'nested';
+        this.nestedFlow = 'forge';
+        await this.analyzeForgeSkill();
+        if (this.forgeManifestJson.length === 0) {
+          throw new Error('Forge analysis did not produce a SkillManifest');
+        }
+        return;
+      case 'runForgePreview':
+        this.workspaceMode = 'nested';
+        this.nestedFlow = 'forge';
+        await this.prepareForgePreview();
+        if (this.forgeBlueprintJson.length === 0 || this.nestedDslText.length === 0) {
+          throw new Error('Forge preview did not produce AppBlueprint or DSL');
+        }
+        return;
+      case 'installForgePreview':
+        await this.installForgePreview();
+        if (this.nestedFlow !== 'runtime') {
+          throw new Error('Nested App was not installed');
+        }
+        return;
+      case 'runForgePipeline':
+        await this.runForgePipelineFromDebug(command.payload);
+        return;
+      case 'setSkillFields':
+        this.setSkillFieldsFromDebug(command.payload);
+        return;
+      case 'runSkillAction':
+        if (command.payload.trim().length === 0) {
+          throw new Error('runSkillAction requires an action id');
+        }
+        await this.runSkillAction(command.payload);
+        return;
+      case 'setNestedFields':
+        this.setNestedFieldsFromDebug(command.payload);
+        return;
+      case 'runNestedAction':
+        await this.runNestedActionFromDebug(command.payload);
+        return;
+      case 'loadForgeImageFromDevice':
+        this.loadForgeImageFromDevice(command.payload);
+        return;
+      case 'loadForgeImageDataUrl':
+        this.loadForgeImageDataUrl(command.payload);
+        return;
+      case 'resetForgeImageTransfer':
+        this.resetForgeImageTransfer();
+        return;
+      case 'appendForgeImageChunk':
+        this.appendForgeImageChunk(command.payload);
+        return;
+      case 'finishForgeImageTransfer':
+        this.finishForgeImageTransfer();
+        return;
+      case 'loadTravelDemo':
+        await this.loadTravelDemoFromDebug();
+        return;
+      case 'resetWorkbench':
+        this.resetWorkbenchFromDebug();
+        return;
+    }
+  }
+
+  private setForgeSourceFromDebug(payload: string): void {
+    let data: Record<string, Object> = parseDebugObject(payload);
+    let kind: string = debugObjectString(data, 'kind');
+    let value: string = debugObjectString(data, 'value');
+    if (kind !== 'repository' && kind !== 'text' && kind !== 'image') {
+      throw new Error('setForgeSource kind must be repository, text, or image');
+    }
+    if (kind === 'image') {
+      if (this.nestedSession.assets.length === 0) {
+        throw new Error('image source requires an image already loaded in the app');
+      }
+    } else if (value.trim().length === 0) {
+      throw new Error('setForgeSource requires a non-empty value');
+    }
+    this.workspaceMode = 'nested';
+    this.nestedFlow = 'forge';
+    this.forgeStage = 'import';
+    this.forgeSourceKind = kind;
+    if (kind === 'repository') {
+      this.forgeRepositoryUrl = value;
+      this.forgeSourceValue = '';
+    } else if (kind === 'text') {
+      this.forgeSourceValue = value;
+      this.forgeSkillFileName = debugObjectString(data, 'fileName');
+      if (this.forgeSkillFileName.length === 0) {
+        this.forgeSkillFileName = 'debug-skill.md';
+      }
+    } else {
+      this.forgeSourceValue = '';
+    }
+    this.clearForgeArtifacts();
+    this.nestedSession.errorMessage = '';
+    this.statusText = '[HDC] Forge source configured: ' + kind;
+  }
+
+  private async runForgePipelineFromDebug(payload: string): Promise<void> {
+    if (payload.trim().length > 0) {
+      this.setForgeSourceFromDebug(payload);
+    } else if (this.forgeSourceKind.length === 0) {
+      throw new Error('runForgePipeline requires a Forge source payload');
+    }
+    this.workspaceMode = 'nested';
+    this.nestedFlow = 'forge';
+    await this.analyzeForgeSkill();
+    if (this.forgeManifestJson.length === 0) {
+      throw new Error('Forge pipeline stopped after SkillManifest');
+    }
+    await this.prepareForgePreview();
+    if (this.forgeBlueprintJson.length === 0 || this.nestedDslText.length === 0) {
+      throw new Error('Forge pipeline stopped after AppBlueprint');
+    }
+    let data: Record<string, Object> = payload.trim().length > 0 ? parseDebugObject(payload) : {};
+    if (debugObjectBoolean(data, 'install')) {
+      await this.installForgePreview();
+    }
+  }
+
+  private setSkillFieldsFromDebug(payload: string): void {
+    let fields: Array<Record<string, Object>> = parseDebugFields(payload);
+    for (let i: number = 0; i < fields.length; i++) {
+      let id: string = debugObjectString(fields[i], 'id');
+      let value: string = debugObjectString(fields[i], 'value');
+      if (id.length === 0) {
+        throw new Error('setSkillFields contains an empty id');
+      }
+      if (this.skillSession.skillSpec.skillId === 'TRAVEL_PLANNER_V1') {
+        this.updateTravelInput(id, value);
+      } else {
+        this.updateGenericSkillInput(id, value);
+      }
+    }
+  }
+
+  private setNestedFieldsFromDebug(payload: string): void {
+    let fields: Array<Record<string, Object>> = parseDebugFields(payload);
+    for (let i: number = 0; i < fields.length; i++) {
+      let key: string = debugObjectString(fields[i], 'key');
+      let value: string = debugObjectString(fields[i], 'value');
+      if (key.length === 0) {
+        throw new Error('setNestedFields contains an empty key');
+      }
+      this.nestedSession = updateNestedField(this.nestedSession, key, value);
+    }
+  }
+
+  private async runNestedActionFromDebug(payload: string): Promise<void> {
+    let action: NestedAction = JSON.parse(payload) as NestedAction;
+    if (action.id === undefined || action.label === undefined || action.targetPageId === undefined ||
+      action.payload === undefined || !isDebugNestedActionKind(action.kind) ||
+      (action.handling !== undefined && !isDebugNestedActionHandling(action.handling))) {
+      throw new Error('invalid NestedAction payload');
+    }
+    await this.runNestedAction(action);
+  }
+
+  private loadForgeImageFromDevice(payload: string): void {
+    let uri: string = payload.trim();
+    if (uri.length === 0) {
+      throw new Error('loadForgeImageFromDevice requires a device file path');
+    }
+    if (uri.indexOf('/data/local/tmp/') !== 0) {
+      throw new Error('debug image path must stay under /data/local/tmp/');
+    }
+    let dataUrl: string = readImageFileAsDataUrl(uri);
+    let nameStart: number = uri.lastIndexOf('/');
+    let name: string = nameStart >= 0 ? uri.substring(nameStart + 1) : 'hdc-skill-image';
+    let slot: string = this.nestedSession.assets.length === 0 ? 'cover' :
+      'gallery-' + this.nestedSession.assets.length.toString();
+    this.nestedSession = addNestedAsset(this.nestedSession, name, dataUrl, slot);
+    this.workspaceMode = 'nested';
+    this.nestedFlow = 'forge';
+    this.forgeStage = 'import';
+    this.forgeSourceKind = 'image';
+    this.forgeSourceValue = '';
+    this.clearForgeArtifacts();
+    this.nestedSession.errorMessage = '';
+    this.statusText = '[HDC] Skill image loaded from device: ' + name;
+  }
+
+  private loadForgeImageDataUrl(payload: string): void {
+    let dataUrl: string = payload.trim();
+    if (dataUrl.indexOf('data:image/') !== 0) {
+      throw new Error('loadForgeImageDataUrl requires an image data URL');
+    }
+    if (dataUrl.length > 60 * 1024) {
+      throw new Error('image data URL exceeds HDC debug payload limit');
+    }
+    let slot: string = this.nestedSession.assets.length === 0 ? 'cover' :
+      'gallery-' + this.nestedSession.assets.length.toString();
+    this.nestedSession = addNestedAsset(this.nestedSession, 'HDC image data URL', dataUrl, slot);
+    this.workspaceMode = 'nested';
+    this.nestedFlow = 'forge';
+    this.forgeStage = 'import';
+    this.forgeSourceKind = 'image';
+    this.forgeSourceValue = '';
+    this.clearForgeArtifacts();
+    this.nestedSession.errorMessage = '';
+    this.statusText = '[HDC] Skill image data URL loaded';
+  }
+
+  private resetForgeImageTransfer(): void {
+    this.hdcImageChunks = {};
+    this.hdcImageChunkTotal = 0;
+    this.statusText = '[HDC] image transfer reset';
+  }
+
+  private appendForgeImageChunk(payload: string): void {
+    let data: Record<string, Object> = parseDebugObject(payload);
+    let index: number = debugObjectNumber(data, 'index');
+    let total: number = debugObjectNumber(data, 'total');
+    let chunk: string = debugObjectString(data, 'data');
+    if (index < 0 || total <= 0 || total > 32 || index >= total || chunk.length === 0 || chunk.length > 16000) {
+      throw new Error('invalid image chunk');
+    }
+    if (this.hdcImageChunkTotal !== 0 && this.hdcImageChunkTotal !== total) {
+      throw new Error('image chunk total mismatch');
+    }
+    this.hdcImageChunkTotal = total;
+    this.hdcImageChunks[index.toString()] = chunk;
+  }
+
+  private finishForgeImageTransfer(): void {
+    if (this.hdcImageChunkTotal <= 0) {
+      throw new Error('no image chunks received');
+    }
+    let base64: string = '';
+    for (let i: number = 0; i < this.hdcImageChunkTotal; i++) {
+      let chunk: string | undefined = this.hdcImageChunks[i.toString()];
+      if (chunk === undefined || chunk.length === 0) {
+        throw new Error('image chunk missing: ' + i.toString());
+      }
+      base64 = base64 + chunk;
+    }
+    let dataUrl: string = 'data:image/jpeg;base64,' + base64;
+    this.loadForgeImageDataUrl(dataUrl);
+    this.statusText = '[HDC] chunked Skill image loaded';
+  }
+
+  private async loadTravelDemoFromDebug(): Promise<void> {
+    this.workspaceMode = 'nested';
+    this.forgeDraft = createForgeDraft(createSkillSource('text', '旅行规划助手 travel planner', []));
+    this.nestedSession = createNestedSession(defaultTravelNestedApp());
+    this.nestedDslText = JSON.stringify(this.nestedSession.app);
+    this.nestedFlow = 'runtime';
+    this.statusText = '[HDC] travel Nested App loaded';
+  }
+
+  private resetWorkbenchFromDebug(): void {
+    this.workspaceMode = 'nested';
+    this.nestedFlow = 'landing';
+    this.forgeStage = 'import';
+    this.forgeSourceKind = 'repository';
+    this.forgeRepositoryUrl = 'https://github.com/seniverse/skills';
+    this.forgeSourceValue = '';
+    this.forgeSkillFileName = '';
+    this.forgeDraft = createForgeDraft(createSkillSource('repository', this.forgeRepositoryUrl, []));
+    this.skillSession = createSkillSession(defaultTravelSkillSpec());
+    this.nestedSession = createNestedSession(defaultTravelNestedApp());
+    this.nestedDslText = '';
+    this.clearForgeArtifacts();
+    this.statusText = '[HDC] workbench reset';
+  }
+
+  private hdcDebugSnapshot(): HdcDebugSnapshot {
+    return {
+      workspaceMode: this.workspaceMode,
+      nestedFlow: this.nestedFlow,
+      forgeStage: this.forgeStage,
+      skillId: this.skillSession.skillSpec.skillId,
+      activeSkillCardId: this.skillSession.activeCardId,
+      nestedAppId: this.nestedSession.app.appId,
+      activePageId: this.nestedSession.activePageId,
+      skillProgress: this.skillSession.progress,
+      statusText: trimDebugText(this.statusText),
+      errorMessage: trimDebugText(this.nestedSession.errorMessage),
+      manifestLength: this.forgeManifestJson.length,
+      blueprintLength: this.forgeBlueprintJson.length,
+      dslLength: this.nestedDslText.length
+    };
+  }
+
   async finishForge(): Promise<void> {
     await this.prepareForgePreview();
   }
@@ -1643,4 +2000,77 @@ struct Index {
       this.statusText = '打开桌面卡片管理器失败: ' + err.message;
     }
   }
+}
+
+function parseDebugObject(payload: string): Record<string, Object> {
+  if (payload.trim().length === 0) {
+    return {};
+  }
+  let value: Record<string, Object> = JSON.parse(payload) as Record<string, Object>;
+  if (Array.isArray(value)) {
+    throw new Error('debug payload must be a JSON object');
+  }
+  return value;
+}
+
+function parseDebugFields(payload: string): Array<Record<string, Object>> {
+  let data: Record<string, Object> = parseDebugObject(payload);
+  let value: Object | undefined = data['fields'];
+  if (value === undefined || !Array.isArray(value)) {
+    throw new Error('debug payload requires fields array');
+  }
+  let fields: Array<Object> = value as Array<Object>;
+  let output: Array<Record<string, Object>> = [];
+  for (let i: number = 0; i < fields.length; i++) {
+    if (typeof fields[i] !== 'object' || fields[i] === null || Array.isArray(fields[i])) {
+      throw new Error('debug fields must contain objects');
+    }
+    output.push(fields[i] as Record<string, Object>);
+  }
+  return output;
+}
+
+function debugObjectString(data: Record<string, Object>, key: string): string {
+  let value: Object | undefined = data[key];
+  if (value === undefined || typeof value !== 'string') {
+    return '';
+  }
+  return value as string;
+}
+
+function debugObjectNumber(data: Record<string, Object>, key: string): number {
+  let value: Object | undefined = data[key];
+  if (typeof value === 'number') {
+    return value as number;
+  }
+  if (typeof value === 'string') {
+    let parsed: number = Number(value as string);
+    return isNaN(parsed) ? -1 : parsed;
+  }
+  return -1;
+}
+
+function debugObjectBoolean(data: Record<string, Object>, key: string): boolean {
+  let value: Object | undefined = data[key];
+  if (value === true) {
+    return true;
+  }
+  if (typeof value === 'string') {
+    let text: string = value as string;
+    return text === 'true' || text === '1';
+  }
+  return false;
+}
+
+function trimDebugText(value: string): string {
+  return value.replace(/\r/g, ' ').replace(/\n/g, ' ').slice(0, 240);
+}
+
+function isDebugNestedActionKind(value: string): boolean {
+  return value === 'navigate' || value === 'back' || value === 'invokeAgent' ||
+    value === 'pickLocalImage' || value === 'reset';
+}
+
+function isDebugNestedActionHandling(value: string): boolean {
+  return value === 'local' || value === 'agent' || value === 'localThenAgent';
 }

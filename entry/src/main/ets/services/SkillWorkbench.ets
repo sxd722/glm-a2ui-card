@@ -669,6 +669,10 @@ export async function pickFileSystemImageAsDataUrl(context: common.UIAbilityCont
   return readUriAsDataUrl(uris[0]);
 }
 
+export function readImageFileAsDataUrl(uri: string): string {
+  return readUriAsDataUrl(uri);
+}
+
 export async function pickSkillMarkdownFile(context: common.UIAbilityContext): Promise<SkillMarkdownFile> {
   let options: picker.DocumentSelectOptions = new picker.DocumentSelectOptions();
   options.maxSelectNumber = 1;

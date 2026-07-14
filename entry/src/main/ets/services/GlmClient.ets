@@ -50,10 +50,11 @@ const VISUAL_SKILL_MANIFEST_SYSTEM_PROMPT: string = SKILL_MANIFEST_SYSTEM_PROMPT
 const APP_BLUEPRINT_SYSTEM_PROMPT: string =
   'Act as a product designer. Return strict AppBlueprint JSON only. No markdown, URLs, colors outside palette, or code. ' +
   'Return schemaVersion,appId,skillId,title,summary,homePattern,palette,runtimePrompt,dynamicSlots,componentRecipes,nestedApp. ' +
-  'nestedApp is a multi-page NestedAppSpec. Allowed node kinds: heroMedia,glassPanel,sectionHeader,formField,choiceChips,timeline,metric,mediaGallery,actionBar,statusBanner,resultList,dataChart,compareTable,entityPicker,conversationPanel,credentialForm,dynamicSlot. ' +
+  'nestedApp MUST contain appId,title,subtitle,initialPageId,pages and MUST be a complete multi-page NestedAppSpec. ' +
+  'Allowed node kinds: heroMedia,glassPanel,sectionHeader,formField,choiceChips,timeline,metric,mediaGallery,actionBar,statusBanner,resultList,dataChart,compareTable,entityPicker,conversationPanel,credentialForm,dynamicSlot. ' +
   'Allowed actions: navigate,back,invokeAgent,pickLocalImage,reset. Each action may set handling to local,agent,localThenAgent. ' +
   'Every page requires id,title,subtitle,nodes. Every node requires id,kind,title,text,binding,assetId,items,actions,tone. ' +
-  'Every action requires id,label,kind,targetPageId,payload,handling. ' +
+  'Every action requires id,label,kind,targetPageId,payload,handling. The payload MUST be a string; encode structured values as a JSON string and never output a payload object. ' +
   'Prefer tap choices and suggested actions over keyboard input. Only reference supplied local asset ids.';
 
 const RUNTIME_AGENT_SYSTEM_PROMPT: string =
