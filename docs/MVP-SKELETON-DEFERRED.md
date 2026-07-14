@@ -25,7 +25,7 @@ readCredential(credentialRef: string): Promise<string>
 deleteCredential(credentialRef: string): Promise<void>
 ```
 
-**约束**：Prompt、Blueprint、NestedAppSpec、Preferences 和日志只保存 `credentialRef`。读取明文仅允许发生在对应 Tool Adapter 发请求前。
+**约束**：Prompt、Blueprint、ArkUiSpec、Preferences 和日志只保存 `credentialRef`。读取明文仅允许发生在对应 Tool Adapter 发请求前。
 
 **验收**：重启 App 后凭据仍可用；导出 Preferences、Agent 请求和 hilog 均不包含明文。
 
@@ -148,7 +148,7 @@ dismiss(slotId: string): void
      - Agent 页：适合散步吗、是否需要带伞、地点比较
      - 设置页：地点、单位、凭据状态
   -> Compiler + Schema Guard
-  -> NestedAppSpec
+  -> ArkUiSpec Tailwind JSON tree
   -> ArkUI A2UI Renderer
   -> InstalledNestedApp + RuntimeSession
 ```
@@ -237,3 +237,6 @@ $env:DEVECO_SDK_HOME='C:\Program Files\Huawei\DevEco Studio\sdk'
 ```
 
 使用该值后，HarmonyOS default product 已成功完成 ArkTS 编译、HAP 打包和签名。签名 HAP 已更新安装到 Pura X，`EntryAbility` 启动成功，应用进程保持运行，受限 hilog 未发现应用启动崩溃。
+# UI Schema Update
+
+The MVP now uses `ArkUiSpec` with a Tailwind-like utility subset as the only generated UI contract. `AppBlueprint` is a lightweight page plan. See `docs/ARKUI-TAILWIND-DSL.md` for the implemented flow and current deferred items.

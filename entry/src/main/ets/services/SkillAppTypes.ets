@@ -1,4 +1,4 @@
-import { NestedAppSpec } from './NestedAppTypes';
+import { ArkUiSpec } from './ArkUiTypes';
 
 export type SkillSourceKind = 'image' | 'file' | 'repository' | 'text';
 export type ForgeDraftStatus = 'import' | 'analyzed' | 'configured' | 'preview' | 'installed' | 'error';
@@ -68,6 +68,13 @@ export interface ComponentRecipe {
   fallbackNodeKind: string;
 }
 
+export interface AppPagePlan {
+  id: string;
+  title: string;
+  purpose: string;
+  primaryAction: string;
+}
+
 export interface AppBlueprint {
   schemaVersion: string;
   appId: string;
@@ -79,7 +86,7 @@ export interface AppBlueprint {
   runtimePrompt: string;
   dynamicSlots: DynamicSlotPolicy[];
   componentRecipes: ComponentRecipe[];
-  nestedApp: NestedAppSpec;
+  pages: AppPagePlan[];
 }
 
 export interface ForgeDraft {
@@ -87,19 +94,21 @@ export interface ForgeDraft {
   source: SkillSource;
   manifest: SkillManifest;
   blueprint: AppBlueprint;
+  uiSpec: ArkUiSpec;
   status: ForgeDraftStatus;
   trace: string;
   errorMessage: string;
   updatedAt: number;
 }
 
-export interface InstalledNestedApp {
+export interface InstalledSkillApp {
   appId: string;
   schemaVersion: string;
   skillVersion: string;
   generatedAt: number;
   manifest: SkillManifest;
   blueprint: AppBlueprint;
+  uiSpec: ArkUiSpec;
   runtimePrompt: string;
   credentialRefs: string[];
 }

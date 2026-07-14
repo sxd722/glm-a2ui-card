@@ -1,79 +1,69 @@
-import {
-  NestedAction,
-  NestedActionHandling,
-  NestedActionKind,
-  NestedAppSpec,
-  NestedNode,
-  NestedNodeKind,
-  NestedPageSpec
-} from './NestedAppTypes';
-import { defaultTravelNestedApp, isValidNestedAppSpec, normalizeNestedApp } from './NestedAppService';
+import { ArkUiSpec } from './ArkUiTypes';
+import { defaultTravelNestedApp, defaultWeatherArkUiSpec, normalizeArkUiSpec } from './NestedAppService';
 import {
   AppBlueprint,
-  ComponentRecipe,
-  DynamicSlotPolicy,
+  AppPagePlan,
   ForgeDraft,
-  InstalledNestedApp,
+  InstalledSkillApp,
   SkillInputField,
   SkillManifest,
   SkillSource,
   ToolContract
 } from './SkillAppTypes';
 
-const SCHEMA_VERSION: string = 'skill-app-mvp-1';
+const SCHEMA_VERSION: string = 'skill-app-mvp-2';
 
 export function createSkillSource(kind: string, value: string, localAssetIds: string[]): SkillSource {
   let sourceKind: 'image' | 'file' | 'repository' | 'text' = 'text';
-  if (kind === 'image' || kind === 'file' || kind === 'repository') {
-    sourceKind = kind;
-  }
-  return {
-    id: 'source-' + Date.now().toString(),
-    kind: sourceKind,
+  if (kind === 'image' || kind === 'file' || kind === 'repository') { sourceKind = kind; }
+  return { id: 'source-' + Date.now().toString(), kind: sourceKind,
     displayName: sourceKind === 'repository' ? '公开 Skill 仓库' : '用户提供的 Skill',
-    uri: sourceKind === 'repository' ? value : '',
-    textContent: sourceKind === 'repository' ? '' : value,
-    localAssetIds: localAssetIds,
-    importedAt: Date.now()
-  };
+    uri: sourceKind === 'repository' ? value : '', textContent: sourceKind === 'repository' ? '' : value,
+    localAssetIds: localAssetIds, importedAt: Date.now() };
 }
 
 export function createForgeDraft(source: SkillSource): ForgeDraft {
   let manifest: SkillManifest = localManifestForSource(source);
   let blueprint: AppBlueprint = localBlueprintForManifest(manifest);
-  return {
-    draftId: 'forge-' + Date.now().toString(),
-    source: source,
-    manifest: manifest,
-    blueprint: blueprint,
-    status: 'import',
-    trace: 'Skill 来源已就绪，可开始分析。',
-    errorMessage: '',
-    updatedAt: Date.now()
-  };
+  return { draftId: 'forge-' + Date.now().toString(), source: source, manifest: manifest, blueprint: blueprint,
+    uiSpec: localArkUiSpecForManifest(manifest), status: 'import', trace: 'Skill 来源已就绪，可开始分析。',
+    errorMessage: '', updatedAt: Date.now() };
 }
 
 export function localManifestForSource(source: SkillSource): SkillManifest {
   let probe: string = (source.uri + ' ' + source.textContent + ' ' + source.displayName).toLowerCase();
-  if (probe.indexOf('seniverse') >= 0 || probe.indexOf('weather') >= 0 || probe.indexOf('天气') >= 0) {
-    return weatherManifest();
-  }
-  return travelManifest();
+  return probe.indexOf('seniverse') >= 0 || probe.indexOf('weather') >= 0 || probe.indexOf('天气') >= 0 ?
+    weatherManifest() : travelManifest();
 }
 
 export function localBlueprintForManifest(manifest: SkillManifest): AppBlueprint {
-  if (manifest.skillId === 'SENIVERSE_WEATHER_V1') {
-    return weatherBlueprint(manifest);
-  }
-  return travelBlueprint(manifest);
+  let weather: boolean = manifest.skillId.indexOf('WEATHER') >= 0 || manifest.skillName.indexOf('天气') >= 0;
+  let plans: AppPagePlan[] = weather ? [
+    plan('home', '当前天气', '显示情境摘要和少量快捷任务', '查询天气'),
+    plan('forecast', '天气趋势', '浏览未来时段和风险', '返回'),
+    plan('decision', 'Agent 建议', '结合用户动作与工具数据给出建议', '返回首页')
+  ] : [
+    plan('home', '旅行首页', '用封面和摘要建立任务入口', '开始规划'),
+    plan('editor', '行程偏好', '通过最少输入收集关键约束', '生成方案'),
+    plan('plan', '旅行方案', '展示行程并支持继续调整', '预算与清单'),
+    plan('budget', '预算与清单', '汇总预算、清单和本地图片', '重新开始')
+  ];
+  return { schemaVersion: SCHEMA_VERSION, appId: safeId(manifest.skillId), skillId: manifest.skillId,
+    title: manifest.skillName, summary: manifest.description, homePattern: weather ? 'context-dashboard' : 'guided-workbench',
+    palette: ['#6D7E73', '#C89B91', '#E8E3DC', '#7A8A99'], runtimePrompt: runtimePrompt(manifest),
+    dynamicSlots: [], componentRecipes: [], pages: plans };
+}
+
+export function localArkUiSpecForManifest(manifest: SkillManifest): ArkUiSpec {
+  return manifest.skillId.indexOf('WEATHER') >= 0 || manifest.skillName.indexOf('天气') >= 0 ?
+    defaultWeatherArkUiSpec() : defaultTravelNestedApp();
 }
 
 export function normalizeSkillManifest(raw: string, fallback: SkillManifest): SkillManifest {
   try {
-    let manifest: SkillManifest = JSON.parse(cleanJson(raw)) as SkillManifest;
-    if (isValidManifest(manifest)) {
-      return sanitizeSkillManifest(manifest, fallback);
-    }
+    let parsed: SkillManifest = JSON.parse(cleanJson(raw)) as SkillManifest;
+    if (parsed !== undefined && parsed !== null && typeof parsed.skillId === 'string' && parsed.skillId.length > 0 &&
+      typeof parsed.skillName === 'string' && parsed.skillName.length > 0) { return sanitizeManifest(parsed, fallback); }
   } catch (e) {
   }
   return fallback;
@@ -81,459 +71,132 @@ export function normalizeSkillManifest(raw: string, fallback: SkillManifest): Sk
 
 export function normalizeAppBlueprint(raw: string, fallback: AppBlueprint): AppBlueprint {
   try {
-    let blueprint: AppBlueprint = JSON.parse(cleanJson(raw)) as AppBlueprint;
-    if (isValidBlueprint(blueprint)) {
-      return blueprint;
-    }
+    let parsed: AppBlueprint = JSON.parse(cleanJson(raw)) as AppBlueprint;
+    let repaired: AppBlueprint = sanitizeBlueprint(parsed, fallback);
+    if (repaired.appId.length > 0 && repaired.skillId.length > 0 && repaired.pages.length > 0) { return repaired; }
   } catch (e) {
   }
   return fallback;
 }
 
-export function compileBlueprint(blueprint: AppBlueprint): NestedAppSpec {
-  return normalizeNestedApp(JSON.stringify(blueprint.nestedApp));
+export function compileBlueprint(blueprint: AppBlueprint, spec?: ArkUiSpec): ArkUiSpec {
+  if (spec !== undefined) { return normalizeArkUiSpec(JSON.stringify(spec), defaultTravelNestedApp()); }
+  return blueprint.skillId.indexOf('WEATHER') >= 0 ? defaultWeatherArkUiSpec() : defaultTravelNestedApp();
 }
 
-export function installBlueprint(draft: ForgeDraft): InstalledNestedApp {
-  return {
-    appId: draft.blueprint.appId,
-    schemaVersion: draft.blueprint.schemaVersion,
-    skillVersion: draft.manifest.version,
-    generatedAt: Date.now(),
-    manifest: draft.manifest,
-    blueprint: draft.blueprint,
-    runtimePrompt: draft.blueprint.runtimePrompt,
-    credentialRefs: credentialRefs(draft.manifest)
-  };
+export function installBlueprint(draft: ForgeDraft): InstalledSkillApp {
+  return { appId: draft.blueprint.appId, schemaVersion: draft.blueprint.schemaVersion,
+    skillVersion: draft.manifest.version, generatedAt: Date.now(), manifest: draft.manifest,
+    blueprint: draft.blueprint, uiSpec: draft.uiSpec, runtimePrompt: draft.blueprint.runtimePrompt,
+    credentialRefs: credentialRefs(draft.manifest) };
 }
 
 export function updateDraftManifest(draft: ForgeDraft, manifest: SkillManifest, trace: string): ForgeDraft {
-  let next: ForgeDraft = cloneDraft(draft);
-  next.manifest = manifest;
-  next.blueprint = localBlueprintForManifest(manifest);
-  next.status = 'analyzed';
-  next.trace = trace;
-  next.errorMessage = '';
-  next.updatedAt = Date.now();
-  return next;
+  let next: ForgeDraft = cloneDraft(draft); next.manifest = manifest; next.blueprint = localBlueprintForManifest(manifest);
+  next.uiSpec = localArkUiSpecForManifest(manifest); next.status = 'analyzed'; next.trace = trace; next.errorMessage = '';
+  next.updatedAt = Date.now(); return next;
 }
 
 export function updateDraftBlueprint(draft: ForgeDraft, blueprint: AppBlueprint, trace: string): ForgeDraft {
-  let next: ForgeDraft = cloneDraft(draft);
-  next.blueprint = blueprint;
-  next.status = 'preview';
-  next.trace = trace;
-  next.errorMessage = '';
-  next.updatedAt = Date.now();
-  return next;
+  let next: ForgeDraft = cloneDraft(draft); next.blueprint = blueprint; next.status = 'configured'; next.trace = trace;
+  next.errorMessage = ''; next.updatedAt = Date.now(); return next;
+}
+
+export function updateDraftUiSpec(draft: ForgeDraft, uiSpec: ArkUiSpec, trace: string): ForgeDraft {
+  let next: ForgeDraft = cloneDraft(draft); next.uiSpec = uiSpec; next.status = 'preview'; next.trace = trace;
+  next.errorMessage = ''; next.updatedAt = Date.now(); return next;
 }
 
 function travelManifest(): SkillManifest {
-  let fields: SkillInputField[] = [
-    field('departure', '出发地', 'entity', true, []),
-    field('destination', '目的地', 'entity', true, []),
-    field('dates', '出行日期', 'dateRange', true, []),
-    field('budget', '预算', 'choiceOrText', true, ['低', '中', '高']),
-    field('preferences', '旅行偏好', 'multiChoice', false, ['美食', '自然', '人文', '亲子', '轻松节奏'])
-  ];
-  return {
-    schemaVersion: SCHEMA_VERSION,
-    skillId: 'TRAVEL_PLANNER_V1',
-    skillName: '旅行规划助手',
-    version: '1',
-    description: '根据用户约束生成可执行的旅行方案。',
-    goals: ['收集旅行约束', '生成交通、住宿、行程、预算和清单'],
-    inputFields: fields,
+  return { schemaVersion: SCHEMA_VERSION, skillId: 'TRAVEL_PLANNER_V1', skillName: '旅行规划助手', version: '1',
+    description: '根据用户约束生成可执行的旅行方案。', goals: ['收集旅行约束', '生成交通、住宿、行程、预算和清单'],
+    inputFields: [field('departure', '出发地', 'entity', true, []), field('destination', '目的地', 'entity', true, []),
+      field('dates', '出行日期', 'dateRange', true, []), field('budget', '预算', 'choiceOrText', true, ['低', '中', '高']),
+      field('preferences', '旅行偏好', 'multiChoice', false, ['美食', '自然', '人文', '亲子', '轻松节奏'])],
     outputFields: ['overview', 'transport', 'lodging', 'itinerary', 'budget', 'checklist'],
     workflow: ['校验输入', '生成交通', '生成住宿', '规划行程', '估算预算', '生成清单'],
-    decisionPoints: ['确认目的地与日期', '接受或调整方案'],
-    toolContracts: travelTools(),
-    permissions: [],
+    decisionPoints: ['确认目的地与日期', '接受或调整方案'], toolContracts: travelTools(), permissions: [],
     constraints: ['只执行本地旅行白名单工具', '不承诺实时价格或库存'],
-    examples: ['上海到成都，3 天 2 晚，2 人，预算 5000 元，偏好美食和轻松游。']
-  };
+    examples: ['上海到成都，3 天 2 晚，2 人，预算 5000 元，偏好美食和轻松游。'] };
 }
 
 function weatherManifest(): SkillManifest {
-  let fields: SkillInputField[] = [
-    field('location', '地点', 'entity', true, []),
-    field('dateRange', '时间范围', 'choice', false, ['今天', '未来 24 小时', '未来 7 天']),
-    field('activity', '关注事项', 'choice', false, ['通勤', '散步', '户外活动', '空气质量'])
-  ];
-  return {
-    schemaVersion: SCHEMA_VERSION,
-    skillId: 'SENIVERSE_WEATHER_V1',
-    skillName: '天气决策助手',
-    version: '1',
-    description: '把实时天气、预报、生活指数和预警转成可执行建议。',
-    goals: ['快速查看天气', '基于天气帮助用户做出活动决策'],
-    inputFields: fields,
+  return { schemaVersion: SCHEMA_VERSION, skillId: 'SENIVERSE_WEATHER_V1', skillName: '天气决策助手', version: '1',
+    description: '把实时天气、预报、生活指数和预警转成可执行建议。', goals: ['快速查看天气', '帮助用户做活动决策'],
+    inputFields: [field('location', '地点', 'entity', true, []),
+      field('dateRange', '时间范围', 'choice', false, ['今天', '未来 24 小时', '未来 7 天']),
+      field('activity', '关注事项', 'choice', false, ['通勤', '散步', '户外活动', '空气质量'])],
     outputFields: ['current', 'hourly', 'daily', 'lifeIndices', 'alerts', 'decision'],
     workflow: ['确定地点', '查询天气', '识别风险', '解释影响', '给出快捷下一步'],
-    decisionPoints: ['位置消歧', '选择关注时段', '确认高风险建议'],
-    toolContracts: weatherTools(),
-    permissions: ['ohos.permission.LOCATION_IN_BACKGROUND（后续按需申请）'],
-    constraints: ['实时事实必须来自天气工具', 'API Key 不进入 GLM Prompt'],
-    examples: ['今天适合散步吗？', '比较上海和杭州周末天气。']
-  };
-}
-
-function travelBlueprint(manifest: SkillManifest): AppBlueprint {
-  return {
-    schemaVersion: SCHEMA_VERSION,
-    appId: 'travel-nested-demo',
-    skillId: manifest.skillId,
-    title: manifest.skillName,
-    summary: '旅行规划的本地可运行回退应用。',
-    homePattern: 'guided-workbench',
-    palette: ['#6D7E73', '#C89B91', '#E8E3DC', '#7A8A99'],
-    runtimePrompt: runtimePrompt(manifest),
-    dynamicSlots: [slot('travel-detail-slot', 'plan')],
-    componentRecipes: [],
-    nestedApp: defaultTravelNestedApp()
-  };
-}
-
-function weatherBlueprint(manifest: SkillManifest): AppBlueprint {
-  return {
-    schemaVersion: SCHEMA_VERSION,
-    appId: 'seniverse-weather-demo',
-    skillId: manifest.skillId,
-    title: manifest.skillName,
-    summary: '情境仪表盘优先、点选优先的天气 Nested App 骨架。',
-    homePattern: 'context-dashboard',
-    palette: ['#6F7E77', '#B8C9CA', '#C8B8AA', '#E9ECE7'],
-    runtimePrompt: runtimePrompt(manifest),
-    dynamicSlots: [slot('weather-decision-slot', 'decision')],
-    componentRecipes: recipeList(),
-    nestedApp: weatherNestedApp()
-  };
-}
-
-function weatherNestedApp(): NestedAppSpec {
-  return {
-    appId: 'seniverse-weather-demo',
-    title: '天气决策助手',
-    subtitle: '由 Skill 生成的情境天气工作台',
-    initialPageId: 'home',
-    pages: [
-      weatherPage('home', '当前天气', '自动定位与实时天气将在工具适配器接入后启用', [
-        weatherNode('weather-status', 'statusBanner', '服务状态', '当前为可交互骨架，未请求实时天气。', 'status', [], [], 'calm'),
-        weatherNode('weather-metrics', 'dataChart', '天气概览', '温度、降雨、风力和空气质量将在此展示。', 'weatherSummary', ['温度 --', '降雨 --', '空气 --'], [], 'accent'),
-        weatherNode('weather-actions', 'actionBar', '', '', '', [], [
-          weatherAction('walking', '适合散步吗', 'invokeAgent', 'decision', 'walking', 'agent'),
-          weatherAction('forecast', '未来三天', 'navigate', 'forecast', '', 'local'),
-          weatherAction('settings', '设置地点与服务', 'navigate', 'settings', '', 'local')
-        ], 'accent')
-      ]),
-      weatherPage('forecast', '天气预报', '时间线和趋势骨架', [
-        weatherNode('forecast-chart', 'dataChart', '逐小时与未来 7 天', '天气工具接入后替换为真实数据。', 'forecast', ['今天', '明天', '后天'], [], 'calm'),
-        weatherNode('forecast-actions', 'actionBar', '', '', '', [], [weatherAction('forecast-back', '返回', 'back', '', '', 'local')], 'calm')
-      ]),
-      weatherPage('decision', 'Agent 决策', '结合天气数据生成建议', [
-        weatherNode('decision-panel', 'conversationPanel', '建议', '点击首页快捷任务后，GLM 结论会更新这里。', 'agentSummary', [], [], 'accent'),
-        weatherNode('decision-slot', 'dynamicSlot', '临时详情', '位置消歧或专项详情可以挂载在此插槽。', 'dynamicSlot', [], [], 'calm'),
-        weatherNode('decision-actions', 'actionBar', '', '', '', [], [weatherAction('decision-back', '返回首页', 'navigate', 'home', '', 'local')], 'calm')
-      ]),
-      weatherPage('settings', '地点与服务', '凭据只由 App Tool Gateway 使用', [
-        weatherNode('location-picker', 'entityPicker', '地点', '选择当前位置或最近地点。', 'location', ['当前位置', '上海', '杭州'], [], 'calm'),
-        weatherNode('credential', 'credentialForm', 'Seniverse API Key', 'MVP 骨架暂由 Forge 设置页接收。', 'credentialStatus', [], [], 'accent'),
-        weatherNode('settings-actions', 'actionBar', '', '', '', [], [weatherAction('settings-back', '完成', 'navigate', 'home', '', 'local')], 'calm')
-      ])
-    ]
-  };
-}
-
-function weatherPage(id: string, title: string, subtitle: string, nodes: NestedNode[]): NestedPageSpec {
-  return { id: id, title: title, subtitle: subtitle, nodes: nodes };
-}
-
-function weatherNode(id: string, kind: NestedNodeKind, title: string, text: string, binding: string, items: string[],
-  actions: NestedAction[], tone: string): NestedNode {
-  return {
-    id: id,
-    kind: kind,
-    title: title,
-    text: text,
-    binding: binding,
-    assetId: '',
-    items: items,
-    actions: actions,
-    tone: tone
-  };
-}
-
-function weatherAction(id: string, label: string, kind: NestedActionKind, targetPageId: string, payload: string,
-  handling: NestedActionHandling): NestedAction {
-  return {
-    id: id,
-    label: label,
-    kind: kind,
-    targetPageId: targetPageId,
-    payload: payload,
-    handling: handling
-  };
-}
-
-function field(id: string, label: string, kind: string, required: boolean, options: string[]): SkillInputField {
-  return { id: id, label: label, kind: kind, required: required, options: options };
-}
-
-function tool(name: string, description: string, adapterId: string, implemented: boolean, origin: string): ToolContract {
-  return {
-    name: name,
-    description: description,
-    adapterId: adapterId,
-    inputFields: [],
-    outputFields: ['summary', 'details'],
-    allowedOrigins: origin.length > 0 ? [origin] : [],
-    credentialRef: '',
-    confirmation: 'none',
-    implemented: implemented
-  };
+    decisionPoints: ['位置消歧', '选择关注时段', '确认高风险建议'], toolContracts: weatherTools(),
+    permissions: [], constraints: ['实时事实必须来自天气工具', 'API Key 不进入 GLM Prompt'],
+    examples: ['今天适合散步吗？', '比较上海和杭州周末天气。'] };
 }
 
 function travelTools(): ToolContract[] {
-  return [
-    tool('travel.validateInputs', '校验旅行输入', 'local.travel', true, ''),
-    tool('travel.suggestTransport', '生成交通建议', 'local.travel', true, ''),
-    tool('travel.suggestLodging', '生成住宿建议', 'local.travel', true, ''),
-    tool('travel.planDailyItinerary', '生成每日行程', 'local.travel', true, ''),
-    tool('travel.estimateBudget', '估算旅行预算', 'local.travel', true, ''),
-    tool('travel.generateChecklist', '生成出行清单', 'local.travel', true, ''),
-    tool('travel.finalizePlan', '汇总最终方案', 'local.travel', true, '')
-  ];
+  let names: string[] = ['travel.validateInputs', 'travel.suggestTransport', 'travel.suggestLodging',
+    'travel.planDailyItinerary', 'travel.estimateBudget', 'travel.generateChecklist', 'travel.finalizePlan'];
+  let tools: ToolContract[] = [];
+  for (let i: number = 0; i < names.length; i++) { tools.push(tool(names[i], 'local.travel', true)); }
+  return tools;
 }
 
 function weatherTools(): ToolContract[] {
-  let origin: string = 'https://api.seniverse.com';
-  return [
-    tool('weather.searchLocation', '搜索和消歧地点', 'http.seniverse', false, origin),
-    tool('weather.getNow', '查询当前天气', 'http.seniverse', false, origin),
-    tool('weather.getDailyForecast', '查询逐日预报', 'http.seniverse', false, origin),
-    tool('weather.getHourlyForecast', '查询逐小时预报', 'http.seniverse', false, origin),
-    tool('weather.getLifeIndices', '查询生活指数', 'http.seniverse', false, origin),
-    tool('weather.getAlerts', '查询天气预警', 'http.seniverse', false, origin)
-  ];
+  return [tool('weather.current', 'seniverse.weather', false), tool('weather.forecast', 'seniverse.weather', false),
+    tool('weather.lifeIndex', 'seniverse.weather', false), tool('weather.alert', 'seniverse.weather', false)];
 }
 
-function slot(id: string, pageId: string): DynamicSlotPolicy {
-  return {
-    id: id,
-    pageId: pageId,
-    allowedNodeKinds: ['glassPanel', 'resultList', 'conversationPanel', 'compareTable'],
-    maxInstances: 1
-  };
+function sanitizeManifest(value: SkillManifest, fallback: SkillManifest): SkillManifest {
+  let m: SkillManifest = JSON.parse(JSON.stringify(value)) as SkillManifest;
+  if (typeof m.schemaVersion !== 'string') { m.schemaVersion = SCHEMA_VERSION; }
+  if (typeof m.version !== 'string') { m.version = '1'; }
+  if (typeof m.description !== 'string') { m.description = ''; }
+  m.goals = strings(m.goals); m.outputFields = strings(m.outputFields); m.workflow = strings(m.workflow);
+  m.decisionPoints = strings(m.decisionPoints); m.permissions = strings(m.permissions); m.constraints = strings(m.constraints);
+  m.examples = strings(m.examples);
+  if (!Array.isArray(m.inputFields)) { m.inputFields = fallback.inputFields; }
+  if (!Array.isArray(m.toolContracts)) { m.toolContracts = []; }
+  for (let i: number = 0; i < m.inputFields.length; i++) {
+    let f: SkillInputField = m.inputFields[i]; if (typeof f.id !== 'string') { f.id = 'field' + i.toString(); }
+    if (typeof f.label !== 'string') { f.label = f.id; } if (typeof f.kind !== 'string') { f.kind = 'text'; }
+    if (typeof f.required !== 'boolean') { f.required = false; } f.options = strings(f.options);
+  }
+  for (let j: number = 0; j < m.toolContracts.length; j++) {
+    let t: ToolContract = m.toolContracts[j]; if (typeof t.name !== 'string') { t.name = 'unknown.' + j.toString(); }
+    if (typeof t.description !== 'string') { t.description = ''; } if (typeof t.adapterId !== 'string') { t.adapterId = ''; }
+    t.inputFields = strings(t.inputFields); t.outputFields = strings(t.outputFields); t.allowedOrigins = strings(t.allowedOrigins);
+    if (typeof t.credentialRef !== 'string') { t.credentialRef = ''; } if (typeof t.confirmation !== 'string') { t.confirmation = 'none'; }
+    t.implemented = registeredTool(t.name);
+  }
+  return m;
 }
 
-function recipeList(): ComponentRecipe[] {
-  return [{
-    id: 'weather-summary-strip',
-    description: '使用指标和列表组合的天气摘要条。',
-    rootNodeKind: 'dataChart',
-    fallbackNodeKind: 'resultList'
-  }];
+function sanitizeBlueprint(value: AppBlueprint, fallback: AppBlueprint): AppBlueprint {
+  let b: AppBlueprint = JSON.parse(JSON.stringify(value)) as AppBlueprint;
+  if (typeof b.schemaVersion !== 'string') { b.schemaVersion = SCHEMA_VERSION; }
+  if (typeof b.appId !== 'string' || b.appId.length === 0) { b.appId = fallback.appId; }
+  if (typeof b.skillId !== 'string' || b.skillId.length === 0) { b.skillId = fallback.skillId; }
+  if (typeof b.title !== 'string') { b.title = fallback.title; } if (typeof b.summary !== 'string') { b.summary = ''; }
+  if (typeof b.homePattern !== 'string') { b.homePattern = ''; } if (typeof b.runtimePrompt !== 'string') { b.runtimePrompt = ''; }
+  b.palette = strings(b.palette); if (!Array.isArray(b.dynamicSlots)) { b.dynamicSlots = []; }
+  if (!Array.isArray(b.componentRecipes)) { b.componentRecipes = []; }
+  if (!Array.isArray(b.pages) || b.pages.length === 0) { b.pages = fallback.pages; }
+  b.pages = b.pages.slice(0, 5);
+  for (let i: number = 0; i < b.pages.length; i++) {
+    let p: AppPagePlan = b.pages[i]; if (typeof p.id !== 'string' || p.id.length === 0) { p.id = 'page-' + i.toString(); }
+    if (typeof p.title !== 'string') { p.title = p.id; } if (typeof p.purpose !== 'string') { p.purpose = ''; }
+    if (typeof p.primaryAction !== 'string') { p.primaryAction = ''; }
+  }
+  return b;
 }
 
-function runtimePrompt(manifest: SkillManifest): string {
-  return 'Serve skill ' + manifest.skillName + '. Prefer structured choices, use only available tools, and return strict RuntimeAgentTurnResult JSON.';
-}
-
-function isValidManifest(manifest: SkillManifest): boolean {
-  return manifest !== undefined && manifest !== null && typeof manifest.skillId === 'string' &&
-    typeof manifest.skillName === 'string' && manifest.skillId.length > 0 && manifest.skillName.length > 0;
-}
-
-interface ManifestTextObject {
-  id?: string;
-  label?: string;
-  name?: string;
-  step?: string;
-  description?: string;
-  input?: string;
-  output?: string;
-  action?: string;
-  point?: string;
-  example?: string;
-  response?: string;
-}
-
-interface ManifestInputObject {
-  id?: string;
-  label?: string;
-  kind?: string;
-  type?: string;
-  required?: boolean;
-  options?: string[];
-}
-
-function sanitizeSkillManifest(manifest: SkillManifest, fallback: SkillManifest): SkillManifest {
-  if (typeof manifest.schemaVersion !== 'string' || manifest.schemaVersion.length === 0) {
-    manifest.schemaVersion = fallback.schemaVersion;
-  }
-  if (typeof manifest.version !== 'string' || manifest.version.length === 0) {
-    manifest.version = '1';
-  }
-  if (typeof manifest.description !== 'string') {
-    manifest.description = '';
-  }
-  manifest.inputFields = normalizeManifestInputFields(manifest.inputFields);
-  if (!Array.isArray(manifest.toolContracts)) {
-    manifest.toolContracts = [];
-  }
-  manifest.goals = normalizeManifestTextArray(manifest.goals);
-  manifest.outputFields = normalizeManifestTextArray(manifest.outputFields);
-  manifest.workflow = normalizeManifestTextArray(manifest.workflow);
-  manifest.decisionPoints = normalizeManifestTextArray(manifest.decisionPoints);
-  manifest.permissions = normalizeManifestTextArray(manifest.permissions);
-  manifest.constraints = normalizeManifestTextArray(manifest.constraints);
-  manifest.examples = normalizeManifestTextArray(manifest.examples);
-  for (let i: number = 0; i < manifest.toolContracts.length; i++) {
-    let tool: ToolContract = manifest.toolContracts[i];
-    if (!Array.isArray(tool.inputFields)) {
-      tool.inputFields = [];
-    }
-    if (!Array.isArray(tool.outputFields)) {
-      tool.outputFields = [];
-    }
-    if (!Array.isArray(tool.allowedOrigins)) {
-      tool.allowedOrigins = [];
-    }
-    tool.implemented = false;
-  }
-  if (manifest.skillId === fallback.skillId && hasImplementedTool(fallback.toolContracts)) {
-    manifest.toolContracts = fallback.toolContracts;
-  }
-  return manifest;
-}
-
-function normalizeManifestInputFields(values: SkillInputField[]): SkillInputField[] {
-  if (!Array.isArray(values)) {
-    return [];
-  }
-  let normalized: SkillInputField[] = [];
-  for (let i: number = 0; i < values.length; i++) {
-    let raw: ManifestInputObject = JSON.parse(JSON.stringify(values[i])) as ManifestInputObject;
-    let id: string = typeof raw.id === 'string' && raw.id.length > 0 ? raw.id : 'field' + i.toString();
-    let label: string = typeof raw.label === 'string' && raw.label.length > 0 ? raw.label : id;
-    let kind: string = typeof raw.kind === 'string' && raw.kind.length > 0 ? raw.kind : '';
-    if (kind.length === 0 && typeof raw.type === 'string') {
-      kind = raw.type;
-    }
-    if (kind.length === 0) {
-      kind = 'text';
-    }
-    let options: string[] = [];
-    if (Array.isArray(raw.options)) {
-      options = normalizeManifestTextArray(raw.options);
-    }
-    normalized.push({
-      id: id,
-      label: label,
-      kind: kind,
-      required: raw.required === true,
-      options: options
-    });
-  }
-  return normalized;
-}
-
-function hasImplementedTool(tools: ToolContract[]): boolean {
-  for (let i: number = 0; i < tools.length; i++) {
-    if (tools[i].implemented) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function normalizeManifestTextArray(values: string[]): string[] {
-  if (!Array.isArray(values)) {
-    return [];
-  }
-  let normalized: string[] = [];
-  for (let i: number = 0; i < values.length; i++) {
-    let value: string = values[i];
-    if (typeof value === 'string') {
-      if (value.trim().length > 0) {
-        normalized.push(value.trim());
-      }
-      continue;
-    }
-    let objectValue: ManifestTextObject = JSON.parse(JSON.stringify(value)) as ManifestTextObject;
-    let summary: string = manifestObjectSummary(objectValue);
-    if (summary.length > 0) {
-      normalized.push(summary);
-    }
-  }
-  return normalized;
-}
-
-function manifestObjectSummary(value: ManifestTextObject): string {
-  if (typeof value.step === 'string' && value.step.length > 0) {
-    if (typeof value.action === 'string' && value.action.length > 0 && value.action !== value.step) {
-      return value.step + '：' + value.action;
-    }
-    return value.step;
-  }
-  if (typeof value.point === 'string' && value.point.length > 0) {
-    if (typeof value.action === 'string' && value.action.length > 0 && value.action !== value.point) {
-      return value.point + '：' + value.action;
-    }
-    return value.point;
-  }
-  if (typeof value.example === 'string' && value.example.length > 0) {
-    return value.example;
-  }
-  if (typeof value.label === 'string' && value.label.length > 0) {
-    return value.label;
-  }
-  if (typeof value.description === 'string' && value.description.length > 0) {
-    return value.description;
-  }
-  if (typeof value.input === 'string' && value.input.length > 0) {
-    if (typeof value.output === 'string' && value.output.length > 0) {
-      return value.input + ' -> ' + value.output;
-    }
-    return value.input;
-  }
-  if (typeof value.name === 'string' && value.name.length > 0) {
-    return value.name;
-  }
-  if (typeof value.id === 'string') {
-    return value.id;
-  }
-  return '';
-}
-
-function isValidBlueprint(blueprint: AppBlueprint): boolean {
-  return blueprint !== undefined && blueprint !== null && typeof blueprint.appId === 'string' &&
-    typeof blueprint.skillId === 'string' && typeof blueprint.title === 'string' && blueprint.appId.length > 0 &&
-    blueprint.nestedApp !== undefined && blueprint.nestedApp !== null && Array.isArray(blueprint.nestedApp.pages) &&
-    blueprint.nestedApp.pages.length > 0 && isValidNestedAppSpec(blueprint.nestedApp);
-}
-
-function credentialRefs(manifest: SkillManifest): string[] {
-  let refs: string[] = [];
-  for (let i = 0; i < manifest.toolContracts.length; i++) {
-    let ref: string = manifest.toolContracts[i].credentialRef;
-    if (ref.length > 0 && refs.indexOf(ref) < 0) {
-      refs.push(ref);
-    }
-  }
-  return refs;
-}
-
-function cleanJson(raw: string): string {
-  let cleaned: string = raw.replace('```json', '').replace('```', '').trim();
-  let start: number = cleaned.indexOf('{');
-  let end: number = cleaned.lastIndexOf('}');
-  if (start >= 0 && end > start) {
-    return cleaned.substring(start, end + 1);
-  }
-  return cleaned;
-}
-
-function cloneDraft(draft: ForgeDraft): ForgeDraft {
-  return JSON.parse(JSON.stringify(draft)) as ForgeDraft;
-}
+function runtimePrompt(manifest: SkillManifest): string { return 'Act as ' + manifest.skillName + '. Use only registered tools and return structured runtime patches.'; }
+function registeredTool(name: string): boolean { return name.indexOf('travel.') === 0; }
+function safeId(skillId: string): string { return skillId.toLowerCase().replace('_v1', '').replace(/_/g, '-') + '-app'; }
+function field(id: string, label: string, kind: string, required: boolean, options: string[]): SkillInputField { return { id: id, label: label, kind: kind, required: required, options: options }; }
+function tool(name: string, adapterId: string, implemented: boolean): ToolContract { return { name: name, description: name, adapterId: adapterId, inputFields: [], outputFields: [], allowedOrigins: [], credentialRef: '', confirmation: 'none', implemented: implemented }; }
+function plan(id: string, title: string, purpose: string, primaryAction: string): AppPagePlan { return { id: id, title: title, purpose: purpose, primaryAction: primaryAction }; }
+function strings(value: string[]): string[] { if (!Array.isArray(value)) { return []; } let out: string[] = []; for (let i: number = 0; i < value.length; i++) { if (typeof value[i] === 'string') { out.push(value[i]); } } return out; }
+function credentialRefs(manifest: SkillManifest): string[] { let refs: string[] = []; for (let i: number = 0; i < manifest.toolContracts.length; i++) { let ref: string = manifest.toolContracts[i].credentialRef; if (ref.length > 0 && refs.indexOf(ref) < 0) { refs.push(ref); } } return refs; }
+function cleanJson(raw: string): string { let cleaned: string = raw.replace('```json', '').replace('```', '').trim(); let start: number = cleaned.indexOf('{'); let end: number = cleaned.lastIndexOf('}'); return start >= 0 && end > start ? cleaned.substring(start, end + 1) : cleaned; }
+function cloneDraft(draft: ForgeDraft): ForgeDraft { return JSON.parse(JSON.stringify(draft)) as ForgeDraft; }

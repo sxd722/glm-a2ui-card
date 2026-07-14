@@ -1,215 +1,257 @@
-import { NestedAction, NestedActionHandling, NestedActionKind, NestedAppSpec, NestedNode, NestedNodeKind, NestedPageSpec, NestedSessionState } from './NestedAppTypes';
+import { compileArkUiSpec } from './ArkUiCompiler';
+import {
+  ArkUiAction,
+  ArkUiActionKind,
+  ArkUiNode,
+  ArkUiNodeType,
+  ArkUiPage,
+  ArkUiSessionState,
+  ArkUiSpec,
+  CompiledArkUiPage,
+  LocalImageAsset
+} from './ArkUiTypes';
 import { TravelInputs, ToolResult } from './SkillTypes';
 import { runTravelTool } from './SkillWorkbench';
 
-const NODE_KINDS: string[] = ['heroMedia', 'glassPanel', 'sectionHeader', 'formField', 'choiceChips', 'timeline',
-  'metric', 'mediaGallery', 'actionBar', 'statusBanner', 'resultList', 'dataChart', 'compareTable', 'entityPicker',
-  'conversationPanel', 'credentialForm', 'dynamicSlot'];
+const NODE_TYPES: string[] = ['Column', 'Row', 'Stack', 'Scroll', 'Grid', 'List', 'Text', 'Image', 'Button',
+  'TextInput', 'TextArea', 'Toggle', 'Progress', 'Divider', 'Spacer', 'Badge', 'DynamicSlot'];
 const ACTION_KINDS: string[] = ['navigate', 'back', 'invokeAgent', 'pickLocalImage', 'reset'];
-const ACTION_HANDLINGS: string[] = ['local', 'agent', 'localThenAgent'];
 
-export function defaultTravelNestedApp(): NestedAppSpec {
+export function defaultTravelNestedApp(): ArkUiSpec {
   return {
-    appId: 'travel-nested-demo',
-    title: '成都轻旅行',
-    subtitle: '由 Agent Skill 驱动的行程工作台',
-    initialPageId: 'home',
+    schemaVersion: 'arkui-tailwind-1', appId: 'travel-skill-app', title: '成都轻旅行',
+    subtitle: '由 Agent Skill 驱动的原生行程工作台', initialPageId: 'home',
+    theme: { colors: morandiColors() },
     pages: [
-      page('home', '旅行首页', '从灵感到可执行行程', [
-        node('hero', 'heroMedia', '把周末留给好风景', '选择一张本地图片作为旅行封面。', '', 'cover', [], [action('pick-cover', '添加本地封面', 'pickLocalImage', '', 'cover')], 'calm'),
-        node('welcome', 'glassPanel', '成都，慢一点刚刚好', '填好参数后，Agent 会在本地工具白名单内生成交通、住宿、行程和预算建议。', '', '', [], [action('start', '开始规划', 'navigate', 'editor', '')], 'accent'),
-        node('home-status', 'statusBanner', '当前进度', '尚未生成方案', 'status', '', [], [], 'calm')
-      ]),
-      page('editor', '行程偏好', '把旅程交代清楚', [
-        node('origin', 'formField', '出发地', '例如 上海', 'departure', '', [], [], 'calm'),
-        node('destination', 'formField', '目的地', '例如 成都', 'destination', '', [], [], 'calm'),
-        node('dates', 'formField', '出行日期', '例如 2026-08-01 至 2026-08-03', 'dates', '', [], [], 'calm'),
-        node('budget', 'formField', '预算', '例如 5000 元', 'budget', '', [], [], 'calm'),
-        node('preference', 'choiceChips', '旅行偏好', '选择或输入最在意的体验', 'preferences', '', ['美食', '慢游', '人文', '自然'], [], 'accent'),
-        node('editor-actions', 'actionBar', '', '', '', '', [], [action('back-home', '返回', 'back', '', ''), action('generate-plan', '生成方案', 'invokeAgent', 'plan', '')], 'accent')
-      ]),
-      page('plan', '旅行方案', 'Agent 正在为你整理', [
-        node('plan-status', 'statusBanner', '规划状态', '等待执行', 'status', '', [], [], 'accent'),
-        node('timeline', 'timeline', '三天两晚的节奏', '生成后会呈现每天的重点安排。', 'itinerary', '', [], [], 'calm'),
-        node('plan-actions', 'actionBar', '', '', '', '', [], [action('open-budget', '查看预算与清单', 'navigate', 'budget', ''), action('edit-plan', '编辑参数', 'navigate', 'editor', '')], 'accent')
-      ]),
-      page('budget', '预算与清单', '让出发更从容', [
-        node('budget-metric', 'metric', '旅行预算', '预算与本地估算', 'budgetSummary', '', [], [], 'accent'),
-        node('checklist', 'resultList', '出行清单', '为出发前最后确认准备', 'checklist', '', [], [], 'calm'),
-        node('gallery', 'mediaGallery', '旅行灵感', '所有图片均来自本机选择。', '', '', [], [action('pick-gallery', '添加本地图片', 'pickLocalImage', '', 'gallery')], 'calm'),
-        node('finish-actions', 'actionBar', '', '', '', '', [], [action('back-plan', '返回方案', 'back', '', ''), action('restart', '重新开始', 'reset', 'home', '')], 'accent')
-      ])
+      page('home', '旅行首页', node('home-root', 'Column', 'w-full gap-4 p-4 bg-surface', {}, '', [], [
+        node('home-hero', 'Stack', 'w-full h-32 rounded-2xl overflow-hidden bg-primary shadow-md', {}, '', [], [
+          node('cover', 'Image', 'w-full h-32 object-cover rounded-2xl', prop('assetId', 'cover'), '', [], []),
+          node('hero-copy', 'Column', 'w-full gap-2 p-5 bg-black/40', {}, '', [], [
+            node('hero-title', 'Text', 'text-2xl font-bold text-white', prop('text', '把周末留给好风景'), '', [], []),
+            node('hero-subtitle', 'Text', 'text-sm text-white/90', prop('text', '从灵感到可执行行程'), '', [], [])
+          ])
+        ]),
+        node('welcome', 'Column', 'w-full gap-3 p-5 bg-card/90 border border-border rounded-2xl shadow-sm backdrop-blur-sm', {}, '', [], [
+          node('welcome-title', 'Text', 'text-xl font-semibold text-ink', prop('text', '成都，慢一点刚刚好'), '', [], []),
+          node('welcome-body', 'Text', 'text-sm text-muted', prop('text', '填写关键偏好，Agent 将生成行程、预算与清单。'), '', [], []),
+          button('start', '开始规划', 'navigate', 'editor', '')
+        ]),
+        node('home-status', 'Badge', 'p-3 bg-secondary/30 rounded-xl text-ink', prop('text', '准备开始'), 'status', [], [])
+      ])),
+      page('editor', '行程偏好', node('editor-root', 'Column', 'w-full gap-4 p-4 bg-surface', {}, '', [], [
+        node('editor-title', 'Text', 'text-2xl font-bold text-ink', prop('text', '把旅程交代清楚'), '', [], []),
+        input('departure', '出发地', '例如 上海'), input('destination', '目的地', '例如 成都'),
+        input('dates', '出行日期', '例如 3 天 2 晚'), input('budget', '预算', '例如 5000 元'),
+        input('preferences', '偏好', '例如 美食、慢游'),
+        node('editor-actions', 'Row', 'w-full gap-3', {}, '', [], [
+          button('back-home', '返回', 'back', '', ''), button('generate-plan', '生成方案', 'invokeAgent', 'plan', '')
+        ])
+      ])),
+      page('plan', '旅行方案', node('plan-root', 'Column', 'w-full gap-4 p-4 bg-surface', {}, '', [], [
+        node('plan-title', 'Text', 'text-2xl font-bold text-ink', prop('text', '三天两晚的节奏'), '', [], []),
+        node('plan-status', 'Badge', 'p-3 bg-primary/20 rounded-xl text-ink', prop('text', '等待执行'), 'status', [], []),
+        panel('itinerary-panel', '每日行程', 'itinerary'),
+        node('plan-actions', 'Row', 'w-full gap-3', {}, '', [], [
+          button('open-budget', '预算与清单', 'navigate', 'budget', ''),
+          button('edit-plan', '编辑参数', 'navigate', 'editor', '')
+        ])
+      ])),
+      page('budget', '预算与清单', node('budget-root', 'Column', 'w-full gap-4 p-4 bg-surface', {}, '', [], [
+        node('budget-title', 'Text', 'text-2xl font-bold text-ink', prop('text', '出发前最后确认'), '', [], []),
+        panel('budget-panel', '预算估算', 'budgetSummary'), panel('checklist-panel', '出行清单', 'checklist'),
+        node('gallery', 'Image', 'w-full h-24 rounded-xl object-cover bg-secondary/30', prop('assetId', 'gallery'), '',
+          [action('pick-gallery', '添加本地图片', 'pickLocalImage', '', 'gallery')], []),
+        node('finish-actions', 'Row', 'w-full gap-3', {}, '', [], [
+          button('back-plan', '返回方案', 'back', '', ''), button('restart', '重新开始', 'reset', 'home', '')
+        ])
+      ]))
     ]
   };
 }
 
-export function createNestedSession(app: NestedAppSpec): NestedSessionState {
-  let data: Record<string, string> = {};
-  data['departure'] = '上海';
-  data['destination'] = '成都';
-  data['dates'] = '3 天 2 晚';
-  data['budget'] = '5000 元';
-  data['preferences'] = '美食、慢游';
-  data['status'] = '准备开始';
-  data['itinerary'] = '';
-  data['budgetSummary'] = '';
-  data['checklist'] = '';
-  let session: NestedSessionState = {
-    app: app,
-    activePageId: app.initialPageId,
-    routeStack: [app.initialPageId],
-    data: data,
-    assets: [],
-    status: 'idle',
-    agentTrace: 'Nested App 已就绪，可选择本地图片或开始规划。',
-    errorMessage: ''
+export function defaultWeatherArkUiSpec(): ArkUiSpec {
+  return {
+    schemaVersion: 'arkui-tailwind-1', appId: 'weather-skill-app', title: '天气决策助手',
+    subtitle: '情境优先的天气工作台', initialPageId: 'home', theme: { colors: morandiColors() },
+    pages: [page('home', '当前天气', node('weather-root', 'Column', 'w-full gap-4 p-4 bg-surface', {}, '', [], [
+      node('weather-title', 'Text', 'text-3xl font-bold text-ink', prop('text', '今天适合出门吗？'), '', [], []),
+      panel('weather-summary', '当前天气', 'weatherSummary'),
+      node('weather-actions', 'Row', 'w-full gap-3', {}, '', [], [
+        button('walking', '适合散步吗', 'invokeAgent', 'decision', 'walking'),
+        button('forecast', '未来三天', 'navigate', 'forecast', '')
+      ])
+    ])), page('forecast', '未来三天', node('forecast-root', 'Column', 'w-full gap-4 p-4 bg-surface', {}, '', [], [
+      node('forecast-title', 'Text', 'text-2xl font-bold text-ink', prop('text', '未来三天'), '', [], []),
+      panel('forecast-panel', '天气趋势', 'forecast'), button('forecast-back', '返回', 'back', '', '')
+    ])), page('decision', '天气建议', node('decision-root', 'Column', 'w-full gap-4 p-4 bg-surface', {}, '', [], [
+      node('decision-title', 'Text', 'text-2xl font-bold text-ink', prop('text', 'Agent 建议'), '', [], []),
+      panel('decision-panel', '结论', 'agentSummary'), button('decision-home', '返回首页', 'navigate', 'home', '')
+    ]))]
   };
-  return session;
 }
 
-export function normalizeNestedApp(raw: string): NestedAppSpec {
+export function createNestedSession(spec: ArkUiSpec): ArkUiSessionState {
+  let data: Record<string, string> = {};
+  data['departure'] = '上海'; data['destination'] = '成都'; data['dates'] = '3 天 2 晚'; data['budget'] = '5000 元';
+  data['preferences'] = '美食、慢游'; data['status'] = '准备开始'; data['itinerary'] = ''; data['budgetSummary'] = '';
+  data['checklist'] = ''; data['weatherSummary'] = '等待天气工具接入'; data['forecast'] = '等待天气工具接入'; data['agentSummary'] = '';
+  return { app: compileArkUiSpec(spec), activePageId: spec.initialPageId, routeStack: [spec.initialPageId], data: data,
+    assets: [], status: 'idle', agentTrace: 'ArkUiSpec 已编译为原生 UI。', errorMessage: '' };
+}
+
+export function normalizeNestedApp(raw: string): ArkUiSpec {
+  return normalizeArkUiSpec(raw, defaultTravelNestedApp());
+}
+
+export function normalizeArkUiSpec(raw: string, fallback: ArkUiSpec): ArkUiSpec {
   try {
-    let app: NestedAppSpec = JSON.parse(raw.replace('```json', '').replace('```', '').trim()) as NestedAppSpec;
-    if (isValidNestedAppSpec(app)) {
-      return app;
-    }
+    let parsed: ArkUiSpec = JSON.parse(cleanJson(raw)) as ArkUiSpec;
+    let repaired: ArkUiSpec = sanitizeSpec(parsed, fallback);
+    if (isValidArkUiSpec(repaired)) { return repaired; }
   } catch (e) {
   }
-  return defaultTravelNestedApp();
+  return fallback;
 }
 
-export function activeNestedPage(session: NestedSessionState): NestedPageSpec {
-  for (let i = 0; i < session.app.pages.length; i++) {
-    if (session.app.pages[i].id === session.activePageId) {
-      return session.app.pages[i];
-    }
+export function normalizeArkUiPage(raw: string, fallback: ArkUiPage): ArkUiPage {
+  try {
+    let parsed: ArkUiPage = JSON.parse(cleanJson(raw)) as ArkUiPage;
+    let repaired: ArkUiPage = sanitizePage(parsed, 0);
+    if (repaired.id.length > 0 && validNode(repaired.root, 0)) { return repaired; }
+  } catch (e) {
+  }
+  return fallback;
+}
+
+export function composeArkUiSpec(blueprintAppId: string, title: string, subtitle: string,
+  pages: ArkUiPage[], fallback: ArkUiSpec): ArkUiSpec {
+  if (pages.length === 0) { return fallback; }
+  return { schemaVersion: 'arkui-tailwind-1', appId: blueprintAppId, title: title, subtitle: subtitle,
+    initialPageId: pages[0].id, theme: fallback.theme, pages: pages };
+}
+
+export function activeNestedPage(session: ArkUiSessionState): CompiledArkUiPage {
+  for (let i: number = 0; i < session.app.pages.length; i++) {
+    if (session.app.pages[i].id === session.activePageId) { return session.app.pages[i]; }
   }
   return session.app.pages[0];
 }
 
-export function updateNestedField(session: NestedSessionState, key: string, value: string): NestedSessionState {
-  let next: NestedSessionState = cloneSession(session);
-  next.data[key] = value;
+export function updateNestedField(session: ArkUiSessionState, key: string, value: string): ArkUiSessionState {
+  let next: ArkUiSessionState = cloneSession(session); next.data[key] = value; return next;
+}
+
+export function addNestedAsset(session: ArkUiSessionState, name: string, dataUrl: string, slot: string): ArkUiSessionState {
+  let next: ArkUiSessionState = cloneSession(session); let id: string = slot.length > 0 ? slot : 'image-' + Date.now().toString();
+  next.assets = next.assets.filter((asset: LocalImageAsset) => asset.id !== id);
+  next.assets.push({ id: id, name: name, dataUrl: dataUrl }); next.agentTrace = '已添加本地图片：' + name; return next;
+}
+
+export function reduceNestedAction(session: ArkUiSessionState, current: ArkUiAction): ArkUiSessionState {
+  let next: ArkUiSessionState = cloneSession(session); next.errorMessage = '';
+  if (current.kind === 'navigate') { navigate(next, current.targetPageId); }
+  else if (current.kind === 'back' && next.routeStack.length > 1) { next.routeStack.pop(); next.activePageId = next.routeStack[next.routeStack.length - 1]; }
+  else if (current.kind === 'reset') { return createNestedSession(rawSpecFromCompiled(next)); }
+  else if (current.kind === 'invokeAgent') { applyTravelDemoAgent(next); navigate(next, current.targetPageId); }
   return next;
 }
 
-export function addNestedAsset(session: NestedSessionState, name: string, dataUrl: string, slot: string): NestedSessionState {
-  let next: NestedSessionState = cloneSession(session);
-  let id: string = slot.length > 0 ? slot : 'image-' + Date.now().toString();
-  next.assets = next.assets.filter((asset) => asset.id !== id);
-  next.assets.push({ id: id, name: name, dataUrl: dataUrl });
-  next.agentTrace = '已添加本地图片：' + name;
-  return next;
-}
-
-export function reduceNestedAction(session: NestedSessionState, current: NestedAction): NestedSessionState {
-  let next: NestedSessionState = cloneSession(session);
-  next.errorMessage = '';
-  if (current.kind === 'navigate') {
-    navigate(next, current.targetPageId);
-  } else if (current.kind === 'back') {
-    if (next.routeStack.length > 1) {
-      next.routeStack.pop();
-      next.activePageId = next.routeStack[next.routeStack.length - 1];
-    }
-  } else if (current.kind === 'reset') {
-    return createNestedSession(next.app);
-  } else if (current.kind === 'invokeAgent') {
-    applyTravelDemoAgent(next);
-    navigate(next, current.targetPageId);
-  }
-  return next;
-}
-
-export function assetDataUrl(session: NestedSessionState, assetId: string): string {
-  for (let i = 0; i < session.assets.length; i++) {
-    if (session.assets[i].id === assetId) {
-      return session.assets[i].dataUrl;
-    }
-  }
+export function assetDataUrl(session: ArkUiSessionState, assetId: string): string {
+  for (let i: number = 0; i < session.assets.length; i++) { if (session.assets[i].id === assetId) { return session.assets[i].dataUrl; } }
   return '';
 }
 
-function applyTravelDemoAgent(session: NestedSessionState): void {
-  let inputs: TravelInputs = {
-    departure: session.data['departure'], destination: session.data['destination'], startDate: session.data['dates'], endDate: session.data['dates'],
-    adults: '2', children: '0', budget: session.data['budget'], preferences: session.data['preferences'], lodging: '', transport: ''
-  };
+export function isValidArkUiSpec(spec: ArkUiSpec): boolean {
+  if (spec === undefined || spec === null || typeof spec.appId !== 'string' || spec.appId.length === 0 ||
+    typeof spec.initialPageId !== 'string' || !Array.isArray(spec.pages) || spec.pages.length === 0) { return false; }
+  let hasInitial: boolean = false;
+  for (let i: number = 0; i < spec.pages.length; i++) {
+    if (spec.pages[i].id === spec.initialPageId) { hasInitial = true; }
+    if (!validNode(spec.pages[i].root, 0)) { return false; }
+  }
+  return hasInitial;
+}
+
+function sanitizeSpec(spec: ArkUiSpec, fallback: ArkUiSpec): ArkUiSpec {
+  let repaired: ArkUiSpec = JSON.parse(JSON.stringify(spec)) as ArkUiSpec;
+  if (typeof repaired.schemaVersion !== 'string') { repaired.schemaVersion = 'arkui-tailwind-1'; }
+  if (typeof repaired.appId !== 'string' || repaired.appId.length === 0) { repaired.appId = fallback.appId; }
+  if (typeof repaired.title !== 'string') { repaired.title = fallback.title; }
+  if (typeof repaired.subtitle !== 'string') { repaired.subtitle = ''; }
+  if (repaired.theme === undefined || repaired.theme === null || repaired.theme.colors === undefined) { repaired.theme = fallback.theme; }
+  if (!Array.isArray(repaired.pages) || repaired.pages.length === 0) { return fallback; }
+  repaired.pages = repaired.pages.slice(0, 5);
+  if (typeof repaired.initialPageId !== 'string' || repaired.initialPageId.length === 0) { repaired.initialPageId = repaired.pages[0].id; }
+  for (let i: number = 0; i < repaired.pages.length; i++) { repaired.pages[i] = sanitizePage(repaired.pages[i], i); }
+  return repaired;
+}
+
+function sanitizePage(pageValue: ArkUiPage, index: number): ArkUiPage {
+  let current: ArkUiPage = pageValue;
+  if (typeof current.id !== 'string' || current.id.length === 0) { current.id = 'page-' + index.toString(); }
+  if (typeof current.title !== 'string') { current.title = ''; }
+  if (typeof current.scroll !== 'boolean') { current.scroll = true; }
+  current.root = sanitizeNode(current.root, current.id + '-root', 0); return current;
+}
+
+function sanitizeNode(value: ArkUiNode, fallbackId: string, depth: number): ArkUiNode {
+  let current: ArkUiNode = value;
+  if (current === undefined || current === null) { return node(fallbackId, 'Column', 'w-full', {}, '', [], []); }
+  if (typeof current.id !== 'string' || current.id.length === 0) { current.id = fallbackId; }
+  if (typeof current.type !== 'string' || NODE_TYPES.indexOf(current.type) < 0) { current.type = 'Column'; }
+  if (typeof current.className !== 'string') { current.className = ''; }
+  if (current.props === undefined || current.props === null) { current.props = {}; }
+  if (typeof current.binding !== 'string') { current.binding = ''; }
+  if (!Array.isArray(current.actions)) { current.actions = []; }
+  if (!Array.isArray(current.children) || depth >= 12) { current.children = []; }
+  for (let i: number = 0; i < current.actions.length; i++) {
+    let a: ArkUiAction = current.actions[i];
+    if (typeof a.id !== 'string') { a.id = current.id + '-action-' + i.toString(); }
+    if (typeof a.label !== 'string') { a.label = ''; }
+    if (ACTION_KINDS.indexOf(a.kind) < 0) { a.kind = 'navigate'; }
+    if (typeof a.targetPageId !== 'string') { a.targetPageId = ''; }
+    if (typeof a.payload !== 'string') { a.payload = a.payload === undefined ? '' : JSON.stringify(a.payload); }
+    if (a.handling !== 'local' && a.handling !== 'agent' && a.handling !== 'localThenAgent') { a.handling = a.kind === 'invokeAgent' ? 'agent' : 'local'; }
+  }
+  for (let j: number = 0; j < current.children.length; j++) { current.children[j] = sanitizeNode(current.children[j], current.id + '-' + j.toString(), depth + 1); }
+  return current;
+}
+
+function validNode(current: ArkUiNode, depth: number): boolean {
+  if (current === undefined || current === null || depth > 12 || typeof current.id !== 'string' ||
+    NODE_TYPES.indexOf(current.type) < 0 || !Array.isArray(current.children) || !Array.isArray(current.actions)) { return false; }
+  for (let i: number = 0; i < current.children.length; i++) { if (!validNode(current.children[i], depth + 1)) { return false; } }
+  return true;
+}
+
+function rawSpecFromCompiled(session: ArkUiSessionState): ArkUiSpec {
+  return defaultTravelNestedApp();
+}
+
+function applyTravelDemoAgent(session: ArkUiSessionState): void {
+  let inputs: TravelInputs = { departure: session.data['departure'], destination: session.data['destination'],
+    startDate: session.data['dates'], endDate: session.data['dates'], adults: '2', children: '0', budget: session.data['budget'],
+    preferences: session.data['preferences'], lodging: '', transport: '' };
   let itinerary: ToolResult = runTravelTool('travel.planDailyItinerary', inputs);
   let budget: ToolResult = runTravelTool('travel.estimateBudget', inputs);
   let checklist: ToolResult = runTravelTool('travel.generateChecklist', inputs);
-  session.data['itinerary'] = itinerary.details.join('\n');
-  session.data['budgetSummary'] = budget.summary + '\n' + budget.details.join('\n');
-  session.data['checklist'] = checklist.details.join('\n');
-  session.data['status'] = '方案已生成';
-  session.status = 'complete';
+  session.data['itinerary'] = itinerary.details.join('\n'); session.data['budgetSummary'] = budget.summary + '\n' + budget.details.join('\n');
+  session.data['checklist'] = checklist.details.join('\n'); session.data['status'] = '方案已生成'; session.status = 'complete';
   session.agentTrace = 'Agent 已执行本地旅行工具：行程、预算、清单。';
 }
 
-export function isValidNestedAppSpec(app: NestedAppSpec): boolean {
-  if (app === undefined || app === null || typeof app.appId !== 'string' || typeof app.title !== 'string' ||
-    typeof app.subtitle !== 'string' || typeof app.initialPageId !== 'string' || !Array.isArray(app.pages) ||
-    app.appId.length === 0 || app.pages.length === 0 || app.initialPageId.length === 0) {
-    return false;
-  }
-  let pageIds: string[] = [];
-  for (let i = 0; i < app.pages.length; i++) {
-    let pageSpec: NestedPageSpec = app.pages[i];
-    if (pageSpec === undefined || pageSpec === null || typeof pageSpec.id !== 'string' || typeof pageSpec.title !== 'string' ||
-      typeof pageSpec.subtitle !== 'string' || !Array.isArray(pageSpec.nodes) || pageSpec.id.length === 0) {
-      return false;
-    }
-    pageIds.push(pageSpec.id);
-    for (let j = 0; j < pageSpec.nodes.length; j++) {
-      let nestedNode: NestedNode = pageSpec.nodes[j];
-      if (nestedNode === undefined || nestedNode === null || typeof nestedNode.id !== 'string' ||
-        typeof nestedNode.kind !== 'string' || typeof nestedNode.title !== 'string' || typeof nestedNode.text !== 'string' ||
-        typeof nestedNode.binding !== 'string' || typeof nestedNode.assetId !== 'string' || typeof nestedNode.tone !== 'string' ||
-        !Array.isArray(nestedNode.items) || !Array.isArray(nestedNode.actions) || NODE_KINDS.indexOf(nestedNode.kind) < 0) {
-        return false;
-      }
-      for (let k = 0; k < nestedNode.actions.length; k++) {
-        let nestedAction: NestedAction = nestedNode.actions[k];
-        if (nestedAction === undefined || nestedAction === null || typeof nestedAction.id !== 'string' ||
-          typeof nestedAction.label !== 'string' || typeof nestedAction.kind !== 'string' ||
-          typeof nestedAction.targetPageId !== 'string' || typeof nestedAction.payload !== 'string' ||
-          ACTION_KINDS.indexOf(nestedAction.kind) < 0) {
-          return false;
-        }
-        if (nestedAction.handling !== undefined && ACTION_HANDLINGS.indexOf(nestedAction.handling) < 0) {
-          return false;
-        }
-      }
-    }
-  }
-  return pageIds.indexOf(app.initialPageId) >= 0;
-}
-
-function navigate(session: NestedSessionState, pageId: string): void {
-  for (let i = 0; i < session.app.pages.length; i++) {
-    if (session.app.pages[i].id === pageId) {
-      session.activePageId = pageId;
-      session.routeStack.push(pageId);
-      return;
-    }
-  }
+function navigate(session: ArkUiSessionState, pageId: string): void {
+  for (let i: number = 0; i < session.app.pages.length; i++) { if (session.app.pages[i].id === pageId) { session.activePageId = pageId; session.routeStack.push(pageId); return; } }
   session.errorMessage = '已拒绝未知页面跳转：' + pageId;
 }
 
-function cloneSession(session: NestedSessionState): NestedSessionState {
-  return JSON.parse(JSON.stringify(session)) as NestedSessionState;
-}
-
-function page(id: string, title: string, subtitle: string, nodes: NestedNode[]): NestedPageSpec {
-  return { id: id, title: title, subtitle: subtitle, nodes: nodes };
-}
-
-function node(id: string, kind: NestedNodeKind, title: string, text: string, binding: string, assetId: string,
-  items: string[], actions: NestedAction[], tone: string): NestedNode {
-  return { id: id, kind: kind, title: title, text: text, binding: binding, assetId: assetId, items: items, actions: actions, tone: tone };
-}
-
-function action(id: string, label: string, kind: NestedActionKind, targetPageId: string, payload: string): NestedAction {
-  let handling: NestedActionHandling = kind === 'invokeAgent' ? 'agent' : 'local';
-  return { id: id, label: label, kind: kind, targetPageId: targetPageId, payload: payload, handling: handling };
-}
+function morandiColors(): Record<string, string> { let colors: Record<string, string> = {}; colors['surface'] = '#FFF1F2EE'; colors['card'] = '#E8FFFFFF'; colors['primary'] = '#FF6D7E73'; colors['secondary'] = '#FFC89B91'; colors['accent'] = '#FF7A8A99'; colors['ink'] = '#FF2E3A35'; colors['muted'] = '#FF5B675F'; colors['border'] = '#99FFFFFF'; colors['white'] = '#FFFFFFFF'; colors['black'] = '#FF111513'; return colors; }
+function page(id: string, title: string, root: ArkUiNode): ArkUiPage { return { id: id, title: title, scroll: true, root: root }; }
+function node(id: string, type: ArkUiNodeType, className: string, props: Record<string, string>, binding: string, actions: ArkUiAction[], children: ArkUiNode[]): ArkUiNode { return { id: id, type: type, className: className, props: props, binding: binding, actions: actions, children: children }; }
+function action(id: string, label: string, kind: ArkUiActionKind, target: string, payload: string): ArkUiAction { return { id: id, label: label, kind: kind, targetPageId: target, payload: payload, handling: kind === 'invokeAgent' ? 'agent' : 'local' }; }
+function button(id: string, label: string, kind: ArkUiActionKind, target: string, payload: string): ArkUiNode { return node(id, 'Button', 'flex-1 h-12 px-4 bg-primary rounded-xl text-white font-semibold', prop('text', label), '', [action(id, label, kind, target, payload)], []); }
+function input(id: string, label: string, placeholder: string): ArkUiNode { return node(id + '-group', 'Column', 'w-full gap-2 p-4 bg-card/90 rounded-xl border border-border', {}, '', [], [node(id + '-label', 'Text', 'text-sm font-medium text-muted', prop('text', label), '', [], []), node(id, 'TextInput', 'w-full h-12 px-3 bg-white/80 rounded-lg text-ink', prop('placeholder', placeholder), id, [], [])]); }
+function panel(id: string, title: string, binding: string): ArkUiNode { return node(id, 'Column', 'w-full gap-2 p-5 bg-card/90 rounded-2xl border border-border shadow-sm backdrop-blur-sm', {}, '', [], [node(id + '-title', 'Text', 'text-lg font-semibold text-ink', prop('text', title), '', [], []), node(id + '-body', 'Text', 'text-sm text-muted', prop('text', '等待生成'), binding, [], [])]); }
+function prop(key: string, value: string): Record<string, string> { let result: Record<string, string> = {}; result[key] = value; return result; }
+function cleanJson(raw: string): string { let cleaned: string = raw.replace('```json', '').replace('```', '').trim(); let start: number = cleaned.indexOf('{'); let end: number = cleaned.lastIndexOf('}'); return start >= 0 && end > start ? cleaned.substring(start, end + 1) : cleaned; }
+function cloneSession(session: ArkUiSessionState): ArkUiSessionState { return JSON.parse(JSON.stringify(session)) as ArkUiSessionState; }
