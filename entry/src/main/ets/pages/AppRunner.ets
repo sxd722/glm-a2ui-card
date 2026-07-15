@@ -76,11 +76,12 @@ struct AppRunner {
   }
 
   build() {
-    Navigation(this.pageStack) {
+    // AppRunner is already a router destination. Rendering the surface directly
+    // avoids an empty nested Navigation container on device while preserving
+    // router-based entry and exit for the standalone Nested App experience.
+    Column() {
       this.RuntimeSurface()
     }
-    .navDestination(this.PageBuilder)
-    .hideNavBar(true)
     .width('100%')
     .height('100%')
   }

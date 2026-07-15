@@ -23,7 +23,9 @@ export function validateUiIrSpec(spec: UiIrSpec, toolNames: string[] = [], asset
     let page = spec.pages[i];
     if (pageIds.indexOf(page.id) >= 0) { diagnostics.push(error('UI1005', '页面 ID 重复', page.id, 'pages')); }
     pageIds.push(page.id);
-    validateNode(page.root, 0, pageIds, diagnostics, toolNames, assetIds);
+  }
+  for (let i: number = 0; i < spec.pages.length; i++) {
+    validateNode(spec.pages[i].root, 0, 0, pageIds, diagnostics, toolNames, assetIds);
   }
   if (pageIds.indexOf(spec.initialPageId) < 0) { diagnostics.push(error('UI1006', '初始页面不存在', '', 'initialPageId')); }
   let stateKeys: string[] = Object.keys(spec.initialState);
@@ -33,7 +35,7 @@ export function validateUiIrSpec(spec: UiIrSpec, toolNames: string[] = [], asset
   return { ok: diagnostics.filter((item: UiIrDiagnostic) => item.severity === 'error').length === 0, diagnostics: diagnostics };
 }
 
-function validateNode(node: UiIrNode, depth: number, pageIds: string[], diagnostics: UiIrDiagnostic[],
+function validateNode(node: UiIrNode, depth: number, forEachDepth: number, pageIds: string[], diagnostics: UiIrDiagnostic[],
   toolNames: string[], assetIds: string[]): void {
   if (depth > 16) { diagnostics.push(error('UI1010', '节点树深度超过限制', node.id, node.id)); return; }
   if (node.id.length === 0) { diagnostics.push(error('UI1011', '节点缺少 ID', '', 'id')); }
@@ -52,12 +54,15 @@ function validateNode(node: UiIrNode, depth: number, pageIds: string[], diagnost
     if (node.source === undefined || node.itemAlias.length === 0 || node.keyPath.length === 0) {
       diagnostics.push(error('UI1015', 'ForEach 缺少 source/item/keyBy', node.id, 'forEach'));
     }
-    if (depth > 3) { diagnostics.push(error('UI1016', 'ForEach 嵌套超过限制', node.id, 'forEach')); }
+    if (forEachDepth >= 3) { diagnostics.push(error('UI1016', 'ForEach 嵌套超过限制', node.id, 'forEach')); }
   }
   let actionKeys: string[] = Object.keys(node.actions);
   if (actionKeys.length > 16) { diagnostics.push(error('UI1017', '节点 Action 过多', node.id, 'actions')); }
   for (let i: number = 0; i < actionKeys.length; i++) { validateAction(node.actions[actionKeys[i]], pageIds, diagnostics, toolNames); }
-  for (let i: number = 0; i < node.children.length; i++) { validateNode(node.children[i], depth + 1, pageIds, diagnostics, toolNames, assetIds); }
+  let childForEachDepth: number = node.kind === 'forEach' ? forEachDepth + 1 : forEachDepth;
+  for (let i: number = 0; i < node.children.length; i++) {
+    validateNode(node.children[i], depth + 1, childForEachDepth, pageIds, diagnostics, toolNames, assetIds);
+  }
   let assetId: UiExpression | undefined = node.props['assetId'];
   if (assetId !== undefined && assetId.kind === 'literal' && assetId.literalValue !== undefined &&
     assetId.literalValue.stringValue.length > 0 && assetIds.length > 0 && assetIds.indexOf(assetId.literalValue.stringValue) < 0) {

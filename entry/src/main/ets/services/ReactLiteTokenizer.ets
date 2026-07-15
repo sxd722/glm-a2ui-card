@@ -15,6 +15,8 @@ class ReactLiteScanner {
   private line: number = 1;
   private column: number = 1;
   private inJsxText: boolean = false;
+  private jsxDepth: number = 0;
+  private currentTagClosing: boolean = false;
   private tokens: ReactLiteToken[] = [];
   private diagnostics: ReactLiteDiagnostic[] = [];
 
@@ -30,8 +32,27 @@ class ReactLiteScanner {
       if (isWhitespace(ch)) { this.advance(ch); continue; }
       if (ch === '/' && this.input.charAt(this.index + 1) === '/') { this.scanLineComment(); continue; }
       if (ch === '/' && this.input.charAt(this.index + 1) === '*') { this.scanBlockComment(); continue; }
-      if (ch === '<') { this.tokens.push(this.single('punctuation', '<')); this.advance(ch); this.inJsxText = false; continue; }
-      if (ch === '>') { this.tokens.push(this.single('punctuation', '>')); this.advance(ch); this.inJsxText = true; continue; }
+      if (ch === '<') {
+        this.tokens.push(this.single('punctuation', '<'));
+        this.currentTagClosing = this.input.charAt(this.index + 1) === '/';
+        this.advance(ch);
+        this.inJsxText = false;
+        continue;
+      }
+      if (ch === '>') {
+        let selfClosing: boolean = this.previousNonWhitespace() === '/';
+        this.tokens.push(this.single('punctuation', '>'));
+        this.advance(ch);
+        if (this.currentTagClosing) {
+          if (this.jsxDepth > 0) { this.jsxDepth--;
+          }
+        } else if (!selfClosing) {
+          this.jsxDepth++;
+        }
+        this.currentTagClosing = false;
+        this.inJsxText = this.jsxDepth > 0;
+        continue;
+      }
       if (this.scanPunctuation(ch)) { continue; }
       if (this.scanOperator(ch)) { continue; }
       if (ch === '"' || ch === "'") { this.scanString(ch); continue; }
@@ -107,6 +128,12 @@ class ReactLiteScanner {
   }
 
   private advance(value: string): void { this.index++; if (value === '\n') { this.line++; this.column = 1; } else { this.column++; } }
+  private previousNonWhitespace(): string {
+    let cursor: number = this.index - 1;
+    while (cursor >= 0 && /\s/.test(this.input.charAt(cursor))) { cursor--;
+    }
+    return cursor >= 0 ? this.input.charAt(cursor) : '';
+  }
   private single(kind: ReactLiteTokenKind, value: string): ReactLiteToken { return this.makeToken(kind, value, this.index, this.line, this.column); }
   private makeToken(kind: ReactLiteTokenKind, value: string, offset: number, line: number, column: number): ReactLiteToken { return { kind: kind, value: value, offset: offset, line: line, column: column }; }
 }

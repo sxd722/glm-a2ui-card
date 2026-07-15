@@ -1643,7 +1643,9 @@ struct Index {
     this.forgeDraft = createForgeDraft(createSkillSource('text', '旅行规划助手 travel planner', []));
     let reactLite: ReactLiteCompileResult = compileTravelReactLite(this.forgeDraft.manifest, this.forgeDraft.blueprint);
     if (!reactLite.ok || reactLite.value === undefined) {
-      this.statusText = '旅行 React Lite Demo 编译失败。';
+      let diagnostics: string = JSON.stringify({ parser: reactLite.diagnostics, ui: reactLite.uiDiagnostics });
+      this.forgeReactLiteDiagnostics = diagnostics;
+      this.statusText = '旅行 React Lite Demo 编译失败：' + diagnostics;
       return;
     }
     this.forgeDraft = updateDraftUiIrSpec(this.forgeDraft, reactLite.value, TRAVEL_REACT_LITE_SOURCE, '',
@@ -2142,13 +2144,13 @@ struct Index {
   private async loadTravelDemoFromDebug(): Promise<void> {
     this.workspaceMode = 'nested';
     await this.launchTravelDemo();
-    this.statusText = '[HDC] travel ArkUiSpec app loaded';
+    if (this.nestedFlow === 'runtime') { this.statusText = '[HDC] travel ArkUiSpec app loaded'; }
   }
 
   private async loadReactLiteDemoFromDebug(): Promise<void> {
     this.workspaceMode = 'nested';
     await this.launchTravelDemo();
-    this.statusText = '[HDC] React Lite travel demo loaded';
+    if (this.nestedFlow === 'runtime') { this.statusText = '[HDC] React Lite travel demo loaded'; }
   }
 
   private compileReactLiteSourceFromDebug(source: string): void {

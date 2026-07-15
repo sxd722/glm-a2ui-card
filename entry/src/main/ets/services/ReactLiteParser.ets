@@ -39,7 +39,11 @@ class Parser {
       this.parseConst();
     }
     this.expect('identifier', 'return', 'RL1002', '函数体必须返回 AppShell。');
+    let wrapped: boolean = this.checkValue('(');
+    if (wrapped) { this.index++; }
     let root: ReactLiteAstNode | undefined = this.parseJsxNode();
+    if (wrapped) { this.expectValue(')', 'RL1001'); }
+    this.optional(';');
     this.expectValue('}', 'RL1001');
     return { initialState: this.initialState, computed: this.computed, root: root };
   }
