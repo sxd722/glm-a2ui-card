@@ -1,6 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { formProvider } from '@kit.FormKit';
+import { router } from '@kit.ArkUI';
 import { CardPreviewModel, GlmLocalConfig } from '../services/A2uiTypes';
 import { defaultCardPreview, isRenderableA2uiDsl, projectDslToCardPreview, SAMPLE_A2UI_JSONL } from '../services/A2uiMvp';
 import { saveLatestCard } from '../services/CardStore';
@@ -28,6 +29,7 @@ import {
   addNestedAsset,
   assetDataUrl,
   composeArkUiSpec,
+  createRunnerSessionSnapshot,
   createTravelDemoSession,
   createNestedSession,
   defaultTravelNestedApp,
@@ -70,7 +72,7 @@ import {
 } from '../services/SkillAppMvp';
 import { AppBlueprint, AppBlueprintParseResult, ForgeDraft, RuntimeAgentTurnRequest, RuntimeAgentTurnResult, SkillSource, ToolContract } from '../services/SkillAppTypes';
 import { applyRuntimeAgentTurn, buildRuntimeAgentTurnRequest, normalizeRuntimeAgentTurnResult } from '../services/NestedAgentRuntime';
-import { saveForgeDraft, saveInstalledNestedApp } from '../services/SkillAppStore';
+import { saveForgeDraft, saveInstalledNestedApp, saveRunnerSession } from '../services/SkillAppStore';
 import {
   HDC_DEBUG_EVENT,
   HdcDebugCommand,
@@ -316,12 +318,8 @@ struct Index {
         .width('100%')
         .height(44)
         .backgroundColor('#9A7E78')
-        .onClick(() => {
-          this.forgeDraft = createForgeDraft(createSkillSource('text', '旅行规划助手 travel planner', []));
-          let travelSpec: ArkUiSpec = defaultTravelNestedApp();
-          this.nestedSession = createTravelDemoSession();
-          this.nestedDslText = JSON.stringify(travelSpec);
-          this.nestedFlow = 'runtime';
+        .onClick(async () => {
+          await this.launchTravelDemo();
         })
     }
     .padding(20)
@@ -1556,13 +1554,42 @@ struct Index {
     this.nestedSession = createNestedSession(compileBlueprint(this.forgeDraft.blueprint, this.forgeDraft.uiSpec));
     this.nestedSession.assets = assets;
     this.nestedSession.agentTrace = 'ArkUiSpec 应用已安装；本地动作即时响应，语义动作进入 GLM Runtime Turn。';
+    let installedApp = installBlueprint(this.forgeDraft);
+    let sessionId: string = 'runner-' + Date.now().toString();
     this.nestedDslText = JSON.stringify(this.forgeDraft.uiSpec);
     try {
-      await saveInstalledNestedApp(this.context, installBlueprint(this.forgeDraft));
+      await saveInstalledNestedApp(this.context, installedApp);
+      await saveRunnerSession(this.context, createRunnerSessionSnapshot(this.nestedSession, installedApp.appId, sessionId));
     } catch (error) {
       this.nestedSession.agentTrace = this.nestedSession.agentTrace + ' 安装信息持久化失败。';
     }
-    this.nestedFlow = 'runtime';
+    await this.openAppRunner(installedApp.appId, sessionId);
+  }
+
+  async openAppRunner(appId: string, sessionId: string): Promise<void> {
+    try {
+      await router.pushUrl({ url: 'pages/AppRunner', params: { appId: appId, sessionId: sessionId } });
+    } catch (error) {
+      let err: BusinessError = error as BusinessError;
+      this.nestedSession.errorMessage = '打开 Nested App 失败：' + err.message;
+      this.nestedFlow = 'runtime';
+    }
+  }
+
+  async launchTravelDemo(): Promise<void> {
+    this.forgeDraft = createForgeDraft(createSkillSource('text', '旅行规划助手 travel planner', []));
+    let travelSpec: ArkUiSpec = defaultTravelNestedApp();
+    this.nestedSession = createTravelDemoSession();
+    this.nestedDslText = JSON.stringify(travelSpec);
+    let installedApp = installBlueprint(this.forgeDraft);
+    let sessionId: string = 'runner-travel-' + Date.now().toString();
+    try {
+      await saveInstalledNestedApp(this.context, installedApp);
+      await saveRunnerSession(this.context, createRunnerSessionSnapshot(this.nestedSession, installedApp.appId, sessionId));
+    } catch (error) {
+      this.nestedSession.errorMessage = '旅行 Demo 持久化失败：' + (error as BusinessError).message;
+    }
+    await this.openAppRunner(installedApp.appId, sessionId);
   }
 
   fallbackArkUiPage(spec: ArkUiSpec, pageId: string): ArkUiPage {
@@ -1717,10 +1744,10 @@ struct Index {
       return;
     }
     this.hdcDebugRunning = true;
-    let command: HdcDebugCommand | undefined = takeNextHdcDebugCommand();
+    let command: HdcDebugCommand | undefined = takeNextHdcDebugCommand('forge');
     while (command !== undefined) {
       await this.executeHdcDebugCommand(command);
-      command = takeNextHdcDebugCommand();
+      command = takeNextHdcDebugCommand('forge');
     }
     this.hdcDebugRunning = false;
   }
@@ -2034,11 +2061,7 @@ struct Index {
 
   private async loadTravelDemoFromDebug(): Promise<void> {
     this.workspaceMode = 'nested';
-    this.forgeDraft = createForgeDraft(createSkillSource('text', '旅行规划助手 travel planner', []));
-    let travelSpec: ArkUiSpec = defaultTravelNestedApp();
-    this.nestedSession = createTravelDemoSession();
-    this.nestedDslText = JSON.stringify(travelSpec);
-    this.nestedFlow = 'runtime';
+    await this.launchTravelDemo();
     this.statusText = '[HDC] travel ArkUiSpec app loaded';
   }
 

@@ -1,4 +1,4 @@
-import { ArkUiSpec } from './ArkUiTypes';
+import { ArkUiSpec, LocalImageAsset } from './ArkUiTypes';
 
 export type SkillSourceKind = 'image' | 'file' | 'repository' | 'text';
 export type ForgeDraftStatus = 'import' | 'analyzed' | 'configured' | 'preview' | 'installed' | 'error';
@@ -94,6 +94,24 @@ export interface AppBlueprintParseResult {
   value: AppBlueprint | undefined;
   diagnostics: string[];
   repairedFields: string[];
+}
+
+export interface RunnerLaunchParams {
+  appId: string;
+  sessionId: string;
+}
+
+export interface RunnerSessionSnapshot {
+  sessionId: string;
+  appId: string;
+  activePageId: string;
+  routeStack: string[];
+  data: Record<string, string>;
+  assets: LocalImageAsset[];
+  status: string;
+  agentTrace: string;
+  errorMessage: string;
+  updatedAt: number;
 }
 
 export interface ForgeDraft {
