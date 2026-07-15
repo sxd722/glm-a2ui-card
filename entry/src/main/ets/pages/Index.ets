@@ -66,11 +66,16 @@ import {
   localBlueprintForManifest,
   normalizeAppBlueprint,
   normalizeSkillManifest,
+  updateDraftUiIrSpec,
   updateDraftBlueprint,
   updateDraftUiSpec,
   updateDraftManifest
 } from '../services/SkillAppMvp';
 import { AppBlueprint, AppBlueprintParseResult, ForgeDraft, RuntimeAgentTurnRequest, RuntimeAgentTurnResult, SkillSource, ToolContract } from '../services/SkillAppTypes';
+import { forgeReactLite } from '../services/ReactLiteForgeService';
+import { compileTravelReactLite, TRAVEL_REACT_LITE_SOURCE } from '../services/ReactLiteExamples';
+import { ReactLiteCompileResult, compileReactLite } from '../services/ReactLiteCompiler';
+import { UiIrSpec } from '../services/UiIrTypes';
 import { applyRuntimeAgentTurn, buildRuntimeAgentTurnRequest, normalizeRuntimeAgentTurnResult } from '../services/NestedAgentRuntime';
 import { saveForgeDraft, saveInstalledNestedApp, saveRunnerSession } from '../services/SkillAppStore';
 import {
@@ -112,6 +117,10 @@ struct Index {
   @State forgeVisionJson: string = '';
   @State forgeBlueprintJson: string = '';
   @State forgePageJson: string = '';
+  @State forgeReactLiteSource: string = '';
+  @State forgeReactLiteRepairSource: string = '';
+  @State forgeReactLiteDiagnostics: string = '';
+  @State forgeUiIrJson: string = '';
   @State nestedSession: NestedSessionState = createNestedSession(defaultTravelNestedApp());
   @State nestedDslText: string = '';
   private context: common.UIAbilityContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -475,6 +484,18 @@ struct Index {
       if (this.forgePageJson.length > 0) {
         this.ForgeArtifactPanel('GLM 逐页 ArkUiPage 原始输出', this.forgePageJson)
       }
+      if (this.forgeReactLiteSource.length > 0) {
+        this.ForgeArtifactPanel('React Lite UI 源码（受限 DSL）', this.forgeReactLiteSource)
+      }
+      if (this.forgeReactLiteRepairSource.length > 0) {
+        this.ForgeArtifactPanel('React Lite 修复源码', this.forgeReactLiteRepairSource)
+      }
+      if (this.forgeReactLiteDiagnostics.length > 0) {
+        this.ForgeArtifactPanel('React Lite 编译诊断', this.forgeReactLiteDiagnostics)
+      }
+      if (this.forgeUiIrJson.length > 0) {
+        this.ForgeArtifactPanel('最终 UI IR（原生 ArkUI 渲染输入）', this.forgeUiIrJson)
+      }
       if (this.nestedDslText.length > 0) {
         this.ForgeArtifactPanel('最终 Nested App DSL', this.nestedDslText)
       }
@@ -505,6 +526,10 @@ struct Index {
       this.ForgeArtifactPanel('SkillManifest', this.forgeManifestJson)
       this.ForgeArtifactPanel('GLM-5.2 AppBlueprint', this.forgeBlueprintJson)
       this.ForgeArtifactPanel('GLM 逐页 ArkUiPage 原始输出', this.forgePageJson)
+      this.ForgeArtifactPanel('React Lite UI 源码', this.forgeReactLiteSource)
+      this.ForgeArtifactPanel('React Lite 修复源码', this.forgeReactLiteRepairSource)
+      this.ForgeArtifactPanel('React Lite 编译诊断', this.forgeReactLiteDiagnostics)
+      this.ForgeArtifactPanel('最终 UI IR', this.forgeUiIrJson)
       this.ForgeArtifactPanel('最终 Nested App DSL', this.nestedDslText)
       Text(this.forgeDraft.trace).fontSize(12).fontColor('#6B655E').width('100%')
       Row({ space: 8 }) {
@@ -1489,6 +1514,35 @@ struct Index {
     }
     this.nestedSession.errorMessage = '';
     this.forgeDraft = updateDraftBlueprint(this.forgeDraft, blueprint, trace);
+    this.statusText = GLM_DEFAULT_MODEL + ' 正在生成 React Lite UI...';
+    this.forgeReactLiteSource = '';
+    this.forgeReactLiteRepairSource = '';
+    this.forgeReactLiteDiagnostics = '';
+    this.forgeUiIrJson = '';
+    try {
+      let reactLite = await forgeReactLite(this.forgeDraft.manifest, blueprint, this.forgeAssetIds(), config);
+      this.forgeReactLiteSource = reactLite.source;
+      this.forgeReactLiteRepairSource = reactLite.repairedSource;
+      this.forgeReactLiteDiagnostics = reactLite.diagnostics.length === 0 ? '无解析诊断' : JSON.stringify(reactLite.diagnostics);
+      if (!reactLite.ok || reactLite.uiSpec === undefined) {
+        throw new Error(reactLite.trace);
+      }
+      let uiIr: UiIrSpec = reactLite.uiSpec;
+      this.forgeDraft = updateDraftUiIrSpec(this.forgeDraft, uiIr, reactLite.source, reactLite.repairedSource,
+        reactLite.diagnostics, trace + ' ' + reactLite.trace);
+      this.nestedDslText = JSON.stringify(uiIr);
+      this.forgeUiIrJson = this.nestedDslText;
+      this.forgeStage = 'preview';
+      this.statusText = 'React Lite 已编译为 UI IR，可确认后创建 Nested App。';
+      await saveForgeDraft(this.context, this.forgeDraft);
+      return;
+    } catch (error) {
+      this.forgeDraft.errorMessage = 'React Lite 生成失败：' + (error as BusinessError).message;
+      this.forgeReactLiteDiagnostics = this.forgeDraft.errorMessage;
+      this.nestedSession.errorMessage = this.forgeDraft.errorMessage;
+      this.statusText = 'React Lite 生成失败；未写入新的 UI 草稿。';
+      return;
+    }
     let generatedPages: ArkUiPage[] = [];
     for (let i: number = 0; i < blueprint.pages.length; i++) {
       let localPage: ArkUiPage = this.fallbackArkUiPage(uiFallback, blueprint.pages[i].id);
@@ -1501,8 +1555,7 @@ struct Index {
           this.forgeAssetIds(), config);
         this.appendForgePageJson(GLM_DEFAULT_MODEL, blueprint.pages[i].id, blueprint.pages[i].title, pageRaw);
         let pageResult: ArkUiPageParseResult = normalizeArkUiPageResult(pageRaw, localPage);
-        if (!pageResult.ok || pageResult.value === undefined) { throw new Error('页面 JSON 未通过 ArkUiSpec 校验'); }
-        page = pageResult.value;
+        page = requireArkUiPage(pageResult);
       } catch (pageError) {
         try {
           let pageFallbackConfig: GlmLocalConfig = { baseUrl: GLM_CODING_ENDPOINT, apiKey: this.apiKey,
@@ -1513,10 +1566,7 @@ struct Index {
           this.appendForgePageJson(GLM_BLUEPRINT_FALLBACK_MODEL, blueprint.pages[i].id,
             blueprint.pages[i].title, pageRaw);
           let fallbackPageResult: ArkUiPageParseResult = normalizeArkUiPageResult(pageRaw, localPage);
-          if (!fallbackPageResult.ok || fallbackPageResult.value === undefined) {
-            throw new Error('兜底模型页面 JSON 未通过 ArkUiSpec 校验');
-          }
-          page = fallbackPageResult.value;
+          page = requireArkUiPage(fallbackPageResult);
         } catch (fallbackPageError) {
           let pageErr: BusinessError = pageError as BusinessError;
           let fallbackPageErr: BusinessError = fallbackPageError as BusinessError;
@@ -1551,6 +1601,19 @@ struct Index {
 
   async installForgePreview(): Promise<void> {
     let assets: LocalImageAsset[] = this.nestedSession.assets;
+    if (this.forgeDraft.uiIrSpec !== undefined) {
+      let installedReactLite = installBlueprint(this.forgeDraft);
+      let reactLiteSessionId: string = 'runner-' + Date.now().toString();
+      this.nestedDslText = JSON.stringify(this.forgeDraft.uiIrSpec);
+      try {
+        await saveInstalledNestedApp(this.context, installedReactLite);
+        this.statusText = 'React Lite Nested App 已安装，正在打开独立运行页。';
+      } catch (error) {
+        this.statusText = 'Nested App 安装信息保存失败。';
+      }
+      await this.openAppRunner(installedReactLite.appId, reactLiteSessionId);
+      return;
+    }
     this.nestedSession = createNestedSession(compileBlueprint(this.forgeDraft.blueprint, this.forgeDraft.uiSpec));
     this.nestedSession.assets = assets;
     this.nestedSession.agentTrace = 'ArkUiSpec 应用已安装；本地动作即时响应，语义动作进入 GLM Runtime Turn。';
@@ -1578,9 +1641,17 @@ struct Index {
 
   async launchTravelDemo(): Promise<void> {
     this.forgeDraft = createForgeDraft(createSkillSource('text', '旅行规划助手 travel planner', []));
-    let travelSpec: ArkUiSpec = defaultTravelNestedApp();
+    let reactLite: ReactLiteCompileResult = compileTravelReactLite(this.forgeDraft.manifest, this.forgeDraft.blueprint);
+    if (!reactLite.ok || reactLite.value === undefined) {
+      this.statusText = '旅行 React Lite Demo 编译失败。';
+      return;
+    }
+    this.forgeDraft = updateDraftUiIrSpec(this.forgeDraft, reactLite.value, TRAVEL_REACT_LITE_SOURCE, '',
+      reactLite.diagnostics, '本地旅行 React Lite fixture 已编译为 ui-ir-1。');
     this.nestedSession = createTravelDemoSession();
-    this.nestedDslText = JSON.stringify(travelSpec);
+    this.nestedDslText = JSON.stringify(reactLite.value);
+    this.forgeUiIrJson = this.nestedDslText;
+    this.forgeReactLiteSource = TRAVEL_REACT_LITE_SOURCE;
     let installedApp = installBlueprint(this.forgeDraft);
     let sessionId: string = 'runner-travel-' + Date.now().toString();
     try {
@@ -1853,6 +1924,15 @@ struct Index {
       case 'loadTravelDemo':
         await this.loadTravelDemoFromDebug();
         return;
+      case 'loadReactLiteDemo':
+        await this.loadReactLiteDemoFromDebug();
+        return;
+      case 'compileReactLiteSource':
+        this.compileReactLiteSourceFromDebug(command.payload);
+        return;
+      case 'runReactLiteSelfTest':
+        this.runReactLiteSelfTestFromDebug();
+        return;
       case 'resetWorkbench':
         this.resetWorkbenchFromDebug();
         return;
@@ -2065,6 +2145,34 @@ struct Index {
     this.statusText = '[HDC] travel ArkUiSpec app loaded';
   }
 
+  private async loadReactLiteDemoFromDebug(): Promise<void> {
+    this.workspaceMode = 'nested';
+    await this.launchTravelDemo();
+    this.statusText = '[HDC] React Lite travel demo loaded';
+  }
+
+  private compileReactLiteSourceFromDebug(source: string): void {
+    let candidate: string = source.length > 0 ? source : this.forgeReactLiteSource;
+    if (candidate.length === 0) { throw new Error('React Lite source is empty'); }
+    let result: ReactLiteCompileResult = compileReactLite(candidate, {
+      manifest: this.forgeDraft.manifest, blueprint: this.forgeDraft.blueprint, localAssetIds: this.forgeAssetIds()
+    });
+    this.forgeReactLiteSource = candidate;
+    this.forgeReactLiteDiagnostics = result.ok ? 'HDC compile succeeded' : JSON.stringify(result.diagnostics);
+    if (!result.ok || result.value === undefined) { throw new Error(this.forgeReactLiteDiagnostics); }
+    this.forgeDraft = updateDraftUiIrSpec(this.forgeDraft, result.value, candidate, '', result.diagnostics, 'HDC React Lite compile succeeded.');
+    this.forgeUiIrJson = JSON.stringify(result.value);
+    this.nestedDslText = this.forgeUiIrJson;
+    this.forgeStage = 'preview';
+  }
+
+  private runReactLiteSelfTestFromDebug(): void {
+    let result: ReactLiteCompileResult = compileTravelReactLite(this.forgeDraft.manifest, this.forgeDraft.blueprint);
+    this.statusText = result.ok ? '[HDC] React Lite self-test passed' : '[HDC] React Lite self-test failed';
+    this.forgeReactLiteDiagnostics = result.ok ? 'fixture compile passed' : JSON.stringify(result.diagnostics);
+    if (!result.ok) { throw new Error(this.forgeReactLiteDiagnostics); }
+  }
+
   private resetWorkbenchFromDebug(): void {
     this.workspaceMode = 'nested';
     this.nestedFlow = 'landing';
@@ -2216,6 +2324,11 @@ function debugObjectBoolean(data: Record<string, Object>, key: string): boolean 
 
 function trimDebugText(value: string): string {
   return value.replace(/\r/g, ' ').replace(/\n/g, ' ').slice(0, 240);
+}
+
+function requireArkUiPage(result: ArkUiPageParseResult): ArkUiPage {
+  if (!result.ok || result.value === undefined) { throw new Error('ArkUiPage 校验失败。'); }
+  return result.value;
 }
 
 function isDebugNestedActionKind(value: string): boolean {

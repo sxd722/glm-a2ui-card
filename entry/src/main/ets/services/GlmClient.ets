@@ -3,6 +3,7 @@ import { GlmChatPayload, GlmChatResponse, GlmContentPart, GlmLocalConfig, GlmMes
 import { AgentTurnRequest } from './SkillTypes';
 import { AppBlueprint, AppPagePlan, RuntimeAgentTurnRequest, SkillManifest, SkillSource } from './SkillAppTypes';
 import { GLM_API_KEY } from '../config/GlmLocalSecrets';
+import { buildReactLitePrompt, buildReactLiteRepairPrompt, REACT_LITE_SYSTEM_PROMPT } from './ReactLitePrompt';
 
 export const GLM_CODING_ENDPOINT: string = 'https://open.bigmodel.cn/api/coding/paas/v4';
 export const GLM_GENERAL_ENDPOINT: string = 'https://open.bigmodel.cn/api/paas/v4';
@@ -179,6 +180,26 @@ export async function requestArkUiPageFromGlm(manifest: SkillManifest, blueprint
     { role: 'user', content: JSON.stringify(request) }
   ];
   return requestChatContent(messages, config, 0.35, GLM_REQUEST_TIMEOUT_MS);
+}
+
+export async function requestReactLiteAppFromGlm(manifest: SkillManifest, blueprint: AppBlueprint,
+  localAssetIds: string[], config: GlmLocalConfig): Promise<string> {
+  let messages: GlmMessage[] = [
+    { role: 'system', content: REACT_LITE_SYSTEM_PROMPT },
+    { role: 'user', content: buildReactLitePrompt(manifest, blueprint, localAssetIds) }
+  ];
+  return requestChatContent(messages, config, 0.2, GLM_REQUEST_TIMEOUT_MS);
+}
+
+export async function requestReactLiteRepairFromGlm(manifest: SkillManifest, blueprint: AppBlueprint, source: string,
+  diagnostics: string[], localAssetIds: string[], config: GlmLocalConfig): Promise<string> {
+  let prompt: string = buildReactLiteRepairPrompt(source, diagnostics.join('\n')) +
+    '\nManifest=' + JSON.stringify(manifest) + '\nBlueprint=' + JSON.stringify(blueprint) + '\nAssets=' + JSON.stringify(localAssetIds);
+  let messages: GlmMessage[] = [
+    { role: 'system', content: REACT_LITE_SYSTEM_PROMPT },
+    { role: 'user', content: prompt }
+  ];
+  return requestChatContent(messages, config, 0.15, GLM_REQUEST_TIMEOUT_MS);
 }
 
 export async function requestNestedRuntimeTurnFromGlm(turn: RuntimeAgentTurnRequest,

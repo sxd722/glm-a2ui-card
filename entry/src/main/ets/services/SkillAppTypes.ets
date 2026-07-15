@@ -1,4 +1,6 @@
 import { ArkUiSpec, LocalImageAsset } from './ArkUiTypes';
+import { ReactLiteDiagnostic } from './ReactLiteTypes';
+import { LocalImageAssetRef, UiIrSpec, UiValue } from './UiIrTypes';
 
 export type SkillSourceKind = 'image' | 'file' | 'repository' | 'text';
 export type ForgeDraftStatus = 'import' | 'analyzed' | 'configured' | 'preview' | 'installed' | 'error';
@@ -124,6 +126,24 @@ export interface ForgeDraft {
   trace: string;
   errorMessage: string;
   updatedAt: number;
+  reactLiteSource?: string;
+  repairedReactLiteSource?: string;
+  reactLiteDiagnostics?: ReactLiteDiagnostic[];
+  uiIrSpec?: UiIrSpec;
+  generationMode?: 'reactLite' | 'legacyArkUiSpec';
+}
+
+export interface UiIrRunnerSessionSnapshot {
+  sessionId: string;
+  appId: string;
+  activePageId: string;
+  routeStack: string[];
+  state: Record<string, UiValue>;
+  assets: LocalImageAssetRef[];
+  status: string;
+  agentTrace: string;
+  errorMessage: string;
+  updatedAt: number;
 }
 
 export interface InstalledSkillApp {
@@ -136,6 +156,9 @@ export interface InstalledSkillApp {
   uiSpec: ArkUiSpec;
   runtimePrompt: string;
   credentialRefs: string[];
+  reactLiteSource?: string;
+  uiIrSpec?: UiIrSpec;
+  runtimeSchemaVersion?: string;
 }
 
 export interface RuntimeSession {

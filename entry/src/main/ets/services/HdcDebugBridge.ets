@@ -10,7 +10,8 @@ export type HdcDebugAction = 'setForgeSource' | 'runForgeAnalyze' | 'runForgePre
   'installForgePreview' | 'runForgePipeline' | 'setSkillFields' | 'runSkillAction' |
   'setNestedFields' | 'runNestedAction' | 'loadForgeImageFromDevice' | 'loadForgeImageDataUrl' |
   'resetForgeImageTransfer' | 'appendForgeImageChunk' | 'finishForgeImageTransfer' |
-  'exportForgeArtifacts' | 'exportCurrentArtifacts' | 'loadTravelDemo' | 'resetWorkbench';
+  'exportForgeArtifacts' | 'exportCurrentArtifacts' | 'loadTravelDemo' | 'loadReactLiteDemo' |
+  'compileReactLiteSource' | 'runReactLiteSelfTest' | 'resetWorkbench';
 export type HdcDebugScope = 'forge' | 'runner' | 'any';
 
 export interface HdcDebugCommand {
@@ -227,7 +228,8 @@ function isHdcDebugAction(value: string): boolean {
     value === 'loadForgeImageFromDevice' || value === 'loadForgeImageDataUrl' ||
     value === 'resetForgeImageTransfer' || value === 'appendForgeImageChunk' ||
     value === 'finishForgeImageTransfer' || value === 'exportForgeArtifacts' || value === 'exportCurrentArtifacts' ||
-    value === 'loadTravelDemo' || value === 'resetWorkbench';
+    value === 'loadTravelDemo' || value === 'loadReactLiteDemo' || value === 'compileReactLiteSource' ||
+    value === 'runReactLiteSelfTest' || value === 'resetWorkbench';
 }
 
 function debugScope(action: HdcDebugAction): HdcDebugScope {
@@ -239,6 +241,9 @@ function debugScope(action: HdcDebugAction): HdcDebugScope {
     action === 'loadForgeImageFromDevice' || action === 'loadForgeImageDataUrl' ||
     action === 'resetForgeImageTransfer' || action === 'appendForgeImageChunk' ||
     action === 'finishForgeImageTransfer' || action === 'exportForgeArtifacts') {
+    return 'forge';
+  }
+  if (action === 'loadReactLiteDemo' || action === 'compileReactLiteSource' || action === 'runReactLiteSelfTest') {
     return 'forge';
   }
   return 'any';

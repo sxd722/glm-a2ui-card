@@ -11,6 +11,8 @@ import {
   SkillSource,
   ToolContract
 } from './SkillAppTypes';
+import { ReactLiteDiagnostic } from './ReactLiteTypes';
+import { UiIrSpec } from './UiIrTypes';
 
 const SCHEMA_VERSION: string = 'skill-app-mvp-2';
 
@@ -28,7 +30,8 @@ export function createForgeDraft(source: SkillSource): ForgeDraft {
   let blueprint: AppBlueprint = localBlueprintForManifest(manifest);
   return { draftId: 'forge-' + Date.now().toString(), source: source, manifest: manifest, blueprint: blueprint,
     uiSpec: localArkUiSpecForManifest(manifest), status: 'import', trace: 'Skill 来源已就绪，可开始分析。',
-    errorMessage: '', updatedAt: Date.now() };
+    errorMessage: '', updatedAt: Date.now(), generationMode: 'legacyArkUiSpec', reactLiteSource: '',
+    repairedReactLiteSource: '', reactLiteDiagnostics: [] };
 }
 
 export function localManifestForSource(source: SkillSource): SkillManifest {
@@ -94,7 +97,8 @@ export function installBlueprint(draft: ForgeDraft): InstalledSkillApp {
   return { appId: draft.blueprint.appId, schemaVersion: draft.blueprint.schemaVersion,
     skillVersion: draft.manifest.version, generatedAt: Date.now(), manifest: draft.manifest,
     blueprint: draft.blueprint, uiSpec: draft.uiSpec, runtimePrompt: draft.blueprint.runtimePrompt,
-    credentialRefs: credentialRefs(draft.manifest) };
+    credentialRefs: credentialRefs(draft.manifest), reactLiteSource: draft.reactLiteSource,
+    uiIrSpec: draft.uiIrSpec, runtimeSchemaVersion: draft.uiIrSpec === undefined ? 'arkui-legacy' : 'ui-ir-1' };
 }
 
 export function updateDraftManifest(draft: ForgeDraft, manifest: SkillManifest, trace: string): ForgeDraft {
@@ -111,6 +115,21 @@ export function updateDraftBlueprint(draft: ForgeDraft, blueprint: AppBlueprint,
 export function updateDraftUiSpec(draft: ForgeDraft, uiSpec: ArkUiSpec, trace: string): ForgeDraft {
   let next: ForgeDraft = cloneDraft(draft); next.uiSpec = uiSpec; next.status = 'preview'; next.trace = trace;
   next.errorMessage = ''; next.updatedAt = Date.now(); return next;
+}
+
+export function updateDraftUiIrSpec(draft: ForgeDraft, uiSpec: UiIrSpec, source: string,
+  repairedSource: string, diagnostics: ReactLiteDiagnostic[], trace: string): ForgeDraft {
+  let next: ForgeDraft = cloneDraft(draft);
+  next.uiIrSpec = uiSpec;
+  next.reactLiteSource = source;
+  next.repairedReactLiteSource = repairedSource;
+  next.reactLiteDiagnostics = diagnostics;
+  next.generationMode = 'reactLite';
+  next.status = 'preview';
+  next.trace = trace;
+  next.errorMessage = '';
+  next.updatedAt = Date.now();
+  return next;
 }
 
 function travelManifest(): SkillManifest {

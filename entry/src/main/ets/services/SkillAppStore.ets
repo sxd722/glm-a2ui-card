@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
-import { ForgeDraft, InstalledSkillApp, RunnerSessionSnapshot, RuntimeSession } from './SkillAppTypes';
+import { ForgeDraft, InstalledSkillApp, RunnerSessionSnapshot, RuntimeSession, UiIrRunnerSessionSnapshot } from './SkillAppTypes';
 
 const STORE_NAME: string = 'skillAppMvpStore';
 const FORGE_DRAFT_KEY: string = 'forgeDraft';
@@ -8,6 +8,7 @@ const INSTALLED_APP_KEY: string = 'installedNestedApp';
 const RUNTIME_SESSION_KEY: string = 'runtimeSession';
 const INSTALLED_APP_PREFIX: string = 'installedNestedApp:';
 const RUNNER_SESSION_PREFIX: string = 'runnerSession:';
+const UI_IR_RUNNER_SESSION_PREFIX: string = 'uiIrRunnerSession:';
 
 export async function saveForgeDraft(context: common.Context, draft: ForgeDraft): Promise<void> {
   let store: preferences.Preferences = preferences.getPreferencesSync(context, { name: STORE_NAME });
@@ -70,6 +71,24 @@ export function readRunnerSession(context: common.Context, sessionId: string): R
   if (typeof raw === 'string' && raw.length > 0) {
     try {
       return JSON.parse(raw) as RunnerSessionSnapshot;
+    } catch (e) {
+    }
+  }
+  return undefined;
+}
+
+export async function saveUiIrRunnerSession(context: common.Context, snapshot: UiIrRunnerSessionSnapshot): Promise<void> {
+  let store: preferences.Preferences = preferences.getPreferencesSync(context, { name: STORE_NAME });
+  store.putSync(UI_IR_RUNNER_SESSION_PREFIX + snapshot.sessionId, JSON.stringify(snapshot));
+  await store.flush();
+}
+
+export function readUiIrRunnerSession(context: common.Context, sessionId: string): UiIrRunnerSessionSnapshot | undefined {
+  let store: preferences.Preferences = preferences.getPreferencesSync(context, { name: STORE_NAME });
+  let raw: preferences.ValueType = store.getSync(UI_IR_RUNNER_SESSION_PREFIX + sessionId, '');
+  if (typeof raw === 'string' && raw.length > 0) {
+    try {
+      return JSON.parse(raw) as UiIrRunnerSessionSnapshot;
     } catch (e) {
     }
   }
