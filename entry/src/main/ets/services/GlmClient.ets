@@ -41,11 +41,22 @@ const VISUAL_SKILL_MANIFEST_SYSTEM_PROMPT: string = SKILL_MANIFEST_SYSTEM_PROMPT
   'Infer only what is supported by the image. Preserve the image language. Use stable camelCase input ids and namespaced tool names. ' +
   'Return every required field even when its value is an empty array.';
 
+const APP_BLUEPRINT_TYPESCRIPT_SCHEMA: string =
+  'The exact TypeScript interfaces are: ' +
+  'interface AppPagePlan { id: string; title: string; purpose: string; primaryAction: string; } ' +
+  'interface DynamicSlotPolicy { id: string; pageId: string; allowedNodeKinds: string[]; maxInstances: number; } ' +
+  'interface ComponentRecipe { id: string; description: string; rootNodeKind: string; fallbackNodeKind: string; } ' +
+  'interface AppBlueprint { schemaVersion: string; appId: string; skillId: string; title: string; summary: string; ' +
+  'homePattern: string; palette: string[]; runtimePrompt: string; dynamicSlots: DynamicSlotPolicy[]; ' +
+  'componentRecipes: ComponentRecipe[]; pages: AppPagePlan[]; } ';
+
 const APP_BLUEPRINT_SYSTEM_PROMPT: string =
-  'Act as a product designer. Return strict AppBlueprint JSON only. No markdown, URLs, UI node trees, or code. ' +
-  'Return schemaVersion,appId,skillId,title,summary,homePattern,palette,runtimePrompt,dynamicSlots,componentRecipes,pages. ' +
-  'pages contains 2 to 5 product-level plans; every item contains id,title,purpose,primaryAction. ' +
-  'Prefer tap choices and suggested actions over keyboard input. Keep page purposes concise and domain-specific.';
+  'Act as a product designer. Return exactly one JSON object matching the following TypeScript interfaces. ' +
+  'Do not return markdown, prose, URLs, nestedApp, payload objects, UI node trees, or code. ' +
+  APP_BLUEPRINT_TYPESCRIPT_SCHEMA +
+  'Every declared property is required. pages must contain 2 to 5 product-level plans. ' +
+  'Use stable kebab-case ids, preserve the supplied Skill domain, and keep page purposes concise and domain-specific. ' +
+  'Prefer tap choices and suggested actions over keyboard input. Use only local asset ids supplied in the request.';
 
 const ARK_UI_PAGE_SYSTEM_PROMPT: string =
   'Design one native HarmonyOS page and return strict ArkUiPage JSON only. No markdown, JSX, ArkTS, URLs, comments, or arbitrary values. ' +
