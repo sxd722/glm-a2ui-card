@@ -69,7 +69,7 @@ const ARK_UI_PAGE_SYSTEM_PROMPT: string =
   'localMutate effects use {op,path,value,valueFrom}; allowed ops are set,toggle,increment,append,remove,merge,clear. ' +
   'guards use {path,op,value}; allowed guard ops are exists,eq,neq,truthy,contains,gt,gte,lt,lte. ' +
   'className uses only this Tailwind subset: flex flex-col flex-row flex-1 w-full h-8 h-10 h-12 h-16 h-20 h-24 h-32 ' +
-  'p-0 p-1 p-2 p-3 p-4 p-5 p-6 p-8 px-2 px-3 px-4 px-5 py-2 py-3 py-4 pt-2 pb-2 mt-2 mb-2 gap-1 gap-2 gap-3 gap-4 gap-5 gap-6 ' +
+  'p-0 p-1 p-2 p-3 p-4 p-5 p-6 p-8 px-2 px-3 px-4 px-5 py-2 py-3 py-4 pt-2 pr-2 pb-2 pl-2 m-2 mx-2 my-2 mt-2 mr-2 mb-2 ml-2 gap-1 gap-2 gap-3 gap-4 gap-5 gap-6 ' +
   'text-xs text-sm text-base text-lg text-xl text-2xl text-3xl font-medium font-semibold font-bold text-center text-right ' +
   'bg-surface bg-card bg-primary bg-secondary bg-accent bg-white bg-black text-ink text-muted text-white border border-border ' +
   'rounded rounded-md rounded-lg rounded-xl rounded-2xl rounded-3xl rounded-full shadow-sm shadow-md shadow-lg ' +

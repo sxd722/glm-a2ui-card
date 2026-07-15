@@ -17,6 +17,7 @@ import {
 } from './ArkUiTypes';
 import { TravelInputs, ToolResult } from './SkillTypes';
 import { runTravelTool } from './SkillWorkbench';
+import { RunnerSessionSnapshot } from './SkillAppTypes';
 
 const NODE_TYPES: string[] = ['Column', 'Row', 'Stack', 'Scroll', 'Grid', 'List', 'Text', 'Image', 'Button',
   'TextInput', 'TextArea', 'Toggle', 'ChoiceChips', 'SegmentedControl', 'Progress', 'Divider', 'Spacer', 'Badge', 'DynamicSlot'];
@@ -116,6 +117,26 @@ export function createTravelDemoSession(): ArkUiSessionState {
   return session;
 }
 
+export function createRunnerSessionSnapshot(session: ArkUiSessionState, appId: string,
+  sessionId: string): RunnerSessionSnapshot {
+  return { sessionId: sessionId, appId: appId, activePageId: session.activePageId,
+    routeStack: session.routeStack.slice(), data: JSON.parse(JSON.stringify(session.data)) as Record<string, string>,
+    assets: JSON.parse(JSON.stringify(session.assets)) as LocalImageAsset[], status: session.status,
+    agentTrace: session.agentTrace, errorMessage: session.errorMessage, updatedAt: Date.now() };
+}
+
+export function restoreRunnerSession(spec: ArkUiSpec, snapshot: RunnerSessionSnapshot): ArkUiSessionState {
+  let session: ArkUiSessionState = createNestedSession(spec);
+  session.activePageId = snapshot.activePageId.length > 0 ? snapshot.activePageId : spec.initialPageId;
+  session.routeStack = snapshot.routeStack.length > 0 ? snapshot.routeStack.slice() : [session.activePageId];
+  session.data = JSON.parse(JSON.stringify(snapshot.data)) as Record<string, string>;
+  session.assets = JSON.parse(JSON.stringify(snapshot.assets)) as LocalImageAsset[];
+  session.status = snapshot.status;
+  session.agentTrace = snapshot.agentTrace;
+  session.errorMessage = snapshot.errorMessage;
+  return session;
+}
+
 export function normalizeNestedApp(raw: string, current: ArkUiSpec): ArkUiSpec {
   return normalizeArkUiSpec(raw, current);
 }
@@ -175,6 +196,10 @@ export function addNestedAsset(session: ArkUiSessionState, name: string, dataUrl
 
 export function reduceNestedAction(session: ArkUiSessionState, current: ArkUiAction): ArkUiSessionState {
   let next: ArkUiSessionState = cloneSession(session); next.errorMessage = '';
+  if (!guardsPass(next, current.guards)) {
+    next.errorMessage = '当前状态不满足该操作条件。';
+    return next;
+  }
   if (current.kind === 'navigate') { navigate(next, current.targetPageId); }
   else if (current.kind === 'back' && next.routeStack.length > 1) { next.routeStack.pop(); next.activePageId = next.routeStack[next.routeStack.length - 1]; }
   else if (current.kind === 'reset') { return resetNestedSession(next); }
