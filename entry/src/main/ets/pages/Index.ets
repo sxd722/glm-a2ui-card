@@ -107,6 +107,7 @@ struct Index {
   @State forgeManifestJson: string = '';
   @State forgeVisionJson: string = '';
   @State forgeBlueprintJson: string = '';
+  @State forgePageJson: string = '';
   @State nestedSession: NestedSessionState = createNestedSession(defaultTravelNestedApp());
   @State nestedDslText: string = '';
   private context: common.UIAbilityContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -303,8 +304,9 @@ struct Index {
         .height(48)
         .backgroundColor('#6D7E73')
         .onClick(() => {
-          this.nestedSession = createNestedSession(defaultTravelNestedApp());
-          this.nestedDslText = JSON.stringify(this.nestedSession.app);
+          let travelSpec: ArkUiSpec = defaultTravelNestedApp();
+          this.nestedSession = createNestedSession(travelSpec);
+          this.nestedDslText = JSON.stringify(travelSpec);
           this.forgeStage = 'import';
           this.nestedFlow = 'forge';
         })
@@ -314,8 +316,9 @@ struct Index {
         .backgroundColor('#9A7E78')
         .onClick(() => {
           this.forgeDraft = createForgeDraft(createSkillSource('text', '旅行规划助手 travel planner', []));
-          this.nestedSession = createNestedSession(defaultTravelNestedApp());
-          this.nestedDslText = JSON.stringify(this.nestedSession.app);
+          let travelSpec: ArkUiSpec = defaultTravelNestedApp();
+          this.nestedSession = createNestedSession(travelSpec);
+          this.nestedDslText = JSON.stringify(travelSpec);
           this.nestedFlow = 'runtime';
         })
     }
@@ -469,6 +472,9 @@ struct Index {
       if (this.forgeBlueprintJson.length > 0) {
         this.ForgeArtifactPanel('GLM-5.2 AppBlueprint 原始输出', this.forgeBlueprintJson)
       }
+      if (this.forgePageJson.length > 0) {
+        this.ForgeArtifactPanel('GLM 逐页 ArkUiPage 原始输出', this.forgePageJson)
+      }
       if (this.nestedDslText.length > 0) {
         this.ForgeArtifactPanel('最终 Nested App DSL', this.nestedDslText)
       }
@@ -498,6 +504,7 @@ struct Index {
       })
       this.ForgeArtifactPanel('SkillManifest', this.forgeManifestJson)
       this.ForgeArtifactPanel('GLM-5.2 AppBlueprint', this.forgeBlueprintJson)
+      this.ForgeArtifactPanel('GLM 逐页 ArkUiPage 原始输出', this.forgePageJson)
       this.ForgeArtifactPanel('最终 Nested App DSL', this.nestedDslText)
       Text(this.forgeDraft.trace).fontSize(12).fontColor('#6B655E').width('100%')
       Row({ space: 8 }) {
@@ -1366,6 +1373,7 @@ struct Index {
     this.forgeManifestJson = '';
     this.forgeVisionJson = '';
     this.forgeBlueprintJson = '';
+    this.forgePageJson = '';
     this.nestedDslText = '';
     let source: SkillSource = createSkillSource(this.forgeSourceKind, sourceValue, assetIds);
     let draft: ForgeDraft = createForgeDraft(source);
@@ -1427,6 +1435,7 @@ struct Index {
       return;
     }
     this.forgeBlueprintJson = '';
+    this.forgePageJson = '';
     this.nestedDslText = '';
     let config: GlmLocalConfig = {
       baseUrl: GLM_CODING_ENDPOINT,
@@ -1485,6 +1494,7 @@ struct Index {
           blueprint.pages.length.toString() + '：' + blueprint.pages[i].title;
         pageRaw = await requestArkUiPageFromGlm(this.forgeDraft.manifest, blueprint, blueprint.pages[i],
           this.forgeAssetIds(), config);
+        this.appendForgePageJson(GLM_DEFAULT_MODEL, blueprint.pages[i].id, blueprint.pages[i].title, pageRaw);
         page = normalizeArkUiPage(pageRaw, localPage);
         if (page === localPage) { throw new Error('页面 JSON 未通过 ArkUiSpec 校验'); }
       } catch (pageError) {
@@ -1494,6 +1504,8 @@ struct Index {
           this.statusText = GLM_BLUEPRINT_FALLBACK_MODEL + ' 正在兜底生成：' + blueprint.pages[i].title;
           pageRaw = await requestArkUiPageFromGlm(this.forgeDraft.manifest, blueprint, blueprint.pages[i],
             this.forgeAssetIds(), pageFallbackConfig);
+          this.appendForgePageJson(GLM_BLUEPRINT_FALLBACK_MODEL, blueprint.pages[i].id,
+            blueprint.pages[i].title, pageRaw);
           page = normalizeArkUiPage(pageRaw, localPage);
           if (page === localPage) { throw new Error('兜底模型页面 JSON 未通过 ArkUiSpec 校验'); }
         } catch (fallbackPageError) {
@@ -1545,6 +1557,11 @@ struct Index {
   fallbackArkUiPage(spec: ArkUiSpec, pageId: string): ArkUiPage {
     for (let i: number = 0; i < spec.pages.length; i++) { if (spec.pages[i].id === pageId) { return spec.pages[i]; } }
     return spec.pages[0];
+  }
+
+  private appendForgePageJson(model: string, pageId: string, title: string, raw: string): void {
+    let separator: string = this.forgePageJson.length > 0 ? '\n\n' : '';
+    this.forgePageJson = this.forgePageJson + separator + '===== ' + model + ' · ' + pageId + ' · ' + title + ' =====\n' + raw;
   }
 
   forgeAssetIds(): string[] {
@@ -1675,6 +1692,7 @@ struct Index {
     this.forgeManifestJson = '';
     this.forgeVisionJson = '';
     this.forgeBlueprintJson = '';
+    this.forgePageJson = '';
     this.nestedDslText = '';
   }
 
@@ -2001,8 +2019,9 @@ struct Index {
   private async loadTravelDemoFromDebug(): Promise<void> {
     this.workspaceMode = 'nested';
     this.forgeDraft = createForgeDraft(createSkillSource('text', '旅行规划助手 travel planner', []));
-    this.nestedSession = createNestedSession(defaultTravelNestedApp());
-    this.nestedDslText = JSON.stringify(this.forgeDraft.uiSpec);
+    let travelSpec: ArkUiSpec = defaultTravelNestedApp();
+    this.nestedSession = createNestedSession(travelSpec);
+    this.nestedDslText = JSON.stringify(travelSpec);
     this.nestedFlow = 'runtime';
     this.statusText = '[HDC] travel ArkUiSpec app loaded';
   }

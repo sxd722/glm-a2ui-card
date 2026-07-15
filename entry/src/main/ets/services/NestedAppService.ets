@@ -23,8 +23,7 @@ const ACTION_KINDS: string[] = ['navigate', 'back', 'localMutate', 'invokeTool',
 const MUTATION_OPS: string[] = ['set', 'toggle', 'increment', 'append', 'remove', 'merge', 'clear'];
 const CONDITION_OPS: string[] = ['exists', 'eq', 'neq', 'truthy', 'contains', 'gt', 'gte', 'lt', 'lte'];
 
-export function defaultTravelNestedApp(): ArkUiSpec {
-  return {
+export const TRAVEL_DEMO_ARK_UI_SPEC: ArkUiSpec = {
     schemaVersion: 'arkui-tailwind-2', appId: 'travel-skill-app', title: '成都轻旅行',
     subtitle: '由 Agent Skill 驱动的原生行程工作台', initialPageId: 'home',
     theme: { colors: morandiColors() },
@@ -72,7 +71,10 @@ export function defaultTravelNestedApp(): ArkUiSpec {
         ])
       ]))
     ]
-  };
+};
+
+export function defaultTravelNestedApp(): ArkUiSpec {
+  return JSON.parse(JSON.stringify(TRAVEL_DEMO_ARK_UI_SPEC)) as ArkUiSpec;
 }
 
 export function defaultWeatherArkUiSpec(): ArkUiSpec {
