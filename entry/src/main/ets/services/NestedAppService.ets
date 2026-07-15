@@ -5,6 +5,7 @@ import {
   ArkUiNode,
   ArkUiNodeType,
   ArkUiPage,
+  ArkUiPageParseResult,
   ArkUiSessionState,
   ArkUiSpec,
   ArkUiToolAction,
@@ -104,6 +105,17 @@ export function createNestedSession(spec: ArkUiSpec): ArkUiSessionState {
     assets: [], status: 'idle', agentTrace: 'ArkUiSpec 已编译为原生 UI。', errorMessage: '' };
 }
 
+export function createTravelDemoSession(): ArkUiSessionState {
+  let session: ArkUiSessionState = createNestedSession(defaultTravelNestedApp());
+  session.data['departure'] = '上海';
+  session.data['destination'] = '成都';
+  session.data['dates'] = '3 天 2 晚';
+  session.data['budget'] = '5000 元';
+  session.data['preferences'] = '美食、轻松游';
+  session.agentTrace = '旅行 Demo 示例数据已载入。';
+  return session;
+}
+
 export function normalizeNestedApp(raw: string, current: ArkUiSpec): ArkUiSpec {
   return normalizeArkUiSpec(raw, current);
 }
@@ -119,13 +131,22 @@ export function normalizeArkUiSpec(raw: string, fallback: ArkUiSpec): ArkUiSpec 
 }
 
 export function normalizeArkUiPage(raw: string, fallback: ArkUiPage): ArkUiPage {
+  let result: ArkUiPageParseResult = normalizeArkUiPageResult(raw, fallback);
+  return result.ok && result.value !== undefined ? result.value : fallback;
+}
+
+export function normalizeArkUiPageResult(raw: string, fallback: ArkUiPage): ArkUiPageParseResult {
+  let repairedFields: string[] = [];
   try {
     let parsed: ArkUiPage = JSON.parse(cleanJson(raw)) as ArkUiPage;
-    let repaired: ArkUiPage = sanitizePage(parsed, 0);
-    if (repaired.id.length > 0 && validNode(repaired.root, 0)) { return repaired; }
+    let repaired: ArkUiPage = sanitizePage(parsed, 0, repairedFields);
+    if (repaired.id.length > 0 && validNode(repaired.root, 0)) {
+      return { ok: true, value: repaired, diagnostics: [], repairedFields: repairedFields };
+    }
+    return { ok: false, value: undefined, diagnostics: ['ArkUiPage 缺少有效 root。'], repairedFields: repairedFields };
   } catch (e) {
+    return { ok: false, value: undefined, diagnostics: ['ArkUiPage JSON 无法解析。'], repairedFields: repairedFields };
   }
-  return fallback;
 }
 
 export function composeArkUiSpec(blueprintAppId: string, title: string, subtitle: string,
@@ -193,11 +214,11 @@ function sanitizeSpec(spec: ArkUiSpec, fallback: ArkUiSpec): ArkUiSpec {
   return repaired;
 }
 
-function sanitizePage(pageValue: ArkUiPage, index: number): ArkUiPage {
+function sanitizePage(pageValue: ArkUiPage, index: number, repairedFields: string[] = []): ArkUiPage {
   let current: ArkUiPage = pageValue;
-  if (typeof current.id !== 'string' || current.id.length === 0) { current.id = 'page-' + index.toString(); }
-  if (typeof current.title !== 'string') { current.title = ''; }
-  if (typeof current.scroll !== 'boolean') { current.scroll = true; }
+  if (typeof current.id !== 'string' || current.id.length === 0) { current.id = 'page-' + index.toString(); repairedFields.push('id'); }
+  if (typeof current.title !== 'string') { current.title = ''; repairedFields.push('title'); }
+  if (typeof current.scroll !== 'boolean') { current.scroll = true; repairedFields.push('scroll'); }
   current.root = sanitizeNode(current.root, current.id + '-root', 0); return current;
 }
 

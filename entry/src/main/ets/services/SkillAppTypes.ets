@@ -89,6 +89,13 @@ export interface AppBlueprint {
   pages: AppPagePlan[];
 }
 
+export interface AppBlueprintParseResult {
+  ok: boolean;
+  value: AppBlueprint | undefined;
+  diagnostics: string[];
+  repairedFields: string[];
+}
+
 export interface ForgeDraft {
   draftId: string;
   source: SkillSource;

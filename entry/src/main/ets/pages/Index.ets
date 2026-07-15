@@ -21,17 +21,19 @@ import {
 } from '../services/SkillWorkbench';
 import { AgentTurnResult, SkillCard, SkillCardAction, SkillFieldSpec, SkillSessionState, TravelInputs } from '../services/SkillTypes';
 import { LocalImageAsset, NestedAction, NestedNode, NestedPageSpec, NestedSessionState } from '../services/NestedAppTypes';
-import { ArkUiPage, ArkUiSpec } from '../services/ArkUiTypes';
+import { ArkUiPage, ArkUiPageParseResult, ArkUiSpec } from '../services/ArkUiTypes';
 import { ArkUiNodeRenderer } from '../components/ArkUiRenderer';
 import {
   activeNestedPage,
   addNestedAsset,
   assetDataUrl,
   composeArkUiSpec,
+  createTravelDemoSession,
   createNestedSession,
   defaultTravelNestedApp,
   normalizeNestedApp,
   normalizeArkUiPage,
+  normalizeArkUiPageResult,
   reduceNestedAction,
   updateNestedField
 } from '../services/NestedAppService';
@@ -66,7 +68,7 @@ import {
   updateDraftUiSpec,
   updateDraftManifest
 } from '../services/SkillAppMvp';
-import { AppBlueprint, ForgeDraft, RuntimeAgentTurnRequest, RuntimeAgentTurnResult, SkillSource, ToolContract } from '../services/SkillAppTypes';
+import { AppBlueprint, AppBlueprintParseResult, ForgeDraft, RuntimeAgentTurnRequest, RuntimeAgentTurnResult, SkillSource, ToolContract } from '../services/SkillAppTypes';
 import { applyRuntimeAgentTurn, buildRuntimeAgentTurnRequest, normalizeRuntimeAgentTurnResult } from '../services/NestedAgentRuntime';
 import { saveForgeDraft, saveInstalledNestedApp } from '../services/SkillAppStore';
 import {
@@ -317,7 +319,7 @@ struct Index {
         .onClick(() => {
           this.forgeDraft = createForgeDraft(createSkillSource('text', '旅行规划助手 travel planner', []));
           let travelSpec: ArkUiSpec = defaultTravelNestedApp();
-          this.nestedSession = createNestedSession(travelSpec);
+          this.nestedSession = createTravelDemoSession();
           this.nestedDslText = JSON.stringify(travelSpec);
           this.nestedFlow = 'runtime';
         })
@@ -1446,12 +1448,14 @@ struct Index {
     let primaryError: string = '';
     try {
       this.statusText = 'glm-5.2 正在根据 SkillManifest 设计页面计划...';
-      this.forgeBlueprintJson = await requestAppBlueprintFromGlm(this.forgeDraft.manifest,
+      let primaryBlueprintRaw: string = await requestAppBlueprintFromGlm(this.forgeDraft.manifest,
         this.forgeAssetIds(), config);
-      blueprint = normalizeAppBlueprint(this.forgeBlueprintJson, fallback);
-      if (blueprint === fallback) {
-        throw new Error('glm-5.2 返回内容未通过 AppBlueprint 校验');
+      this.appendForgeBlueprintJson(GLM_DEFAULT_MODEL, primaryBlueprintRaw);
+      let primaryBlueprintResult: AppBlueprintParseResult = normalizeAppBlueprint(primaryBlueprintRaw, fallback);
+      if (!primaryBlueprintResult.ok || primaryBlueprintResult.value === undefined) {
+        throw new Error('glm-5.2 返回内容未通过 AppBlueprint 校验：' + primaryBlueprintResult.diagnostics.join('、'));
       }
+      blueprint = primaryBlueprintResult.value;
       trace = 'glm-5.2 已生成并通过校验的 AppBlueprint。';
     } catch (error) {
       let err: BusinessError = error as BusinessError;
@@ -1463,12 +1467,15 @@ struct Index {
           apiKey: this.apiKey,
           model: GLM_BLUEPRINT_FALLBACK_MODEL
         };
-        this.forgeBlueprintJson = await requestAppBlueprintFromGlm(this.forgeDraft.manifest,
+        let fallbackBlueprintRaw: string = await requestAppBlueprintFromGlm(this.forgeDraft.manifest,
           this.forgeAssetIds(), fallbackConfig);
-        blueprint = normalizeAppBlueprint(this.forgeBlueprintJson, fallback);
-        if (blueprint === fallback) {
-          throw new Error(GLM_BLUEPRINT_FALLBACK_MODEL + ' 返回内容未通过 AppBlueprint 校验');
+        this.appendForgeBlueprintJson(GLM_BLUEPRINT_FALLBACK_MODEL, fallbackBlueprintRaw);
+        let fallbackBlueprintResult: AppBlueprintParseResult = normalizeAppBlueprint(fallbackBlueprintRaw, fallback);
+        if (!fallbackBlueprintResult.ok || fallbackBlueprintResult.value === undefined) {
+          throw new Error(GLM_BLUEPRINT_FALLBACK_MODEL + ' 返回内容未通过 AppBlueprint 校验：' +
+            fallbackBlueprintResult.diagnostics.join('、'));
         }
+        blueprint = fallbackBlueprintResult.value;
         trace = GLM_DEFAULT_MODEL + ' 失败后由 ' + GLM_BLUEPRINT_FALLBACK_MODEL +
           ' 生成并通过校验的 AppBlueprint。';
       } catch (fallbackError) {
@@ -1495,8 +1502,9 @@ struct Index {
         pageRaw = await requestArkUiPageFromGlm(this.forgeDraft.manifest, blueprint, blueprint.pages[i],
           this.forgeAssetIds(), config);
         this.appendForgePageJson(GLM_DEFAULT_MODEL, blueprint.pages[i].id, blueprint.pages[i].title, pageRaw);
-        page = normalizeArkUiPage(pageRaw, localPage);
-        if (page === localPage) { throw new Error('页面 JSON 未通过 ArkUiSpec 校验'); }
+        let pageResult: ArkUiPageParseResult = normalizeArkUiPageResult(pageRaw, localPage);
+        if (!pageResult.ok || pageResult.value === undefined) { throw new Error('页面 JSON 未通过 ArkUiSpec 校验'); }
+        page = pageResult.value;
       } catch (pageError) {
         try {
           let pageFallbackConfig: GlmLocalConfig = { baseUrl: GLM_CODING_ENDPOINT, apiKey: this.apiKey,
@@ -1506,8 +1514,11 @@ struct Index {
             this.forgeAssetIds(), pageFallbackConfig);
           this.appendForgePageJson(GLM_BLUEPRINT_FALLBACK_MODEL, blueprint.pages[i].id,
             blueprint.pages[i].title, pageRaw);
-          page = normalizeArkUiPage(pageRaw, localPage);
-          if (page === localPage) { throw new Error('兜底模型页面 JSON 未通过 ArkUiSpec 校验'); }
+          let fallbackPageResult: ArkUiPageParseResult = normalizeArkUiPageResult(pageRaw, localPage);
+          if (!fallbackPageResult.ok || fallbackPageResult.value === undefined) {
+            throw new Error('兜底模型页面 JSON 未通过 ArkUiSpec 校验');
+          }
+          page = fallbackPageResult.value;
         } catch (fallbackPageError) {
           let pageErr: BusinessError = pageError as BusinessError;
           let fallbackPageErr: BusinessError = fallbackPageError as BusinessError;
@@ -1562,6 +1573,11 @@ struct Index {
   private appendForgePageJson(model: string, pageId: string, title: string, raw: string): void {
     let separator: string = this.forgePageJson.length > 0 ? '\n\n' : '';
     this.forgePageJson = this.forgePageJson + separator + '===== ' + model + ' · ' + pageId + ' · ' + title + ' =====\n' + raw;
+  }
+
+  private appendForgeBlueprintJson(model: string, raw: string): void {
+    let separator: string = this.forgeBlueprintJson.length > 0 ? '\n\n' : '';
+    this.forgeBlueprintJson = this.forgeBlueprintJson + separator + '===== ' + model + ' AppBlueprint =====\n' + raw;
   }
 
   forgeAssetIds(): string[] {
@@ -2020,7 +2036,7 @@ struct Index {
     this.workspaceMode = 'nested';
     this.forgeDraft = createForgeDraft(createSkillSource('text', '旅行规划助手 travel planner', []));
     let travelSpec: ArkUiSpec = defaultTravelNestedApp();
-    this.nestedSession = createNestedSession(travelSpec);
+    this.nestedSession = createTravelDemoSession();
     this.nestedDslText = JSON.stringify(travelSpec);
     this.nestedFlow = 'runtime';
     this.statusText = '[HDC] travel ArkUiSpec app loaded';
