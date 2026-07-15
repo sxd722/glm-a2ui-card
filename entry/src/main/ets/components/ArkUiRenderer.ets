@@ -15,6 +15,8 @@ export struct ArkUiNodeRenderer {
         this.RenderChildren()
       }
       .width('100%')
+      .alignItems(this.horizontalAlign())
+      .justifyContent(this.justifyAlign())
       .padding(this.paddingValue())
       .margin(this.marginValue())
       .backgroundColor(this.node.style.backgroundColor)
@@ -23,17 +25,21 @@ export struct ArkUiNodeRenderer {
       .opacity(this.node.style.opacity)
       .shadow({ radius: this.node.style.shadowRadius, color: this.node.style.shadowColor,
         offsetX: 0, offsetY: this.node.style.shadowOffsetY })
+      .backgroundBlurStyle(this.blurStyle())
     } else if (this.node.type === 'Row') {
       Row({ space: this.node.style.gap }) {
         this.RenderChildren()
       }
       .width('100%')
+      .alignItems(this.verticalAlign())
+      .justifyContent(this.justifyAlign())
       .padding(this.paddingValue())
       .margin(this.marginValue())
       .backgroundColor(this.node.style.backgroundColor)
       .borderRadius(this.node.style.borderRadius)
       .border({ width: this.node.style.borderWidth, color: this.node.style.borderColor })
       .opacity(this.node.style.opacity)
+      .backgroundBlurStyle(this.blurStyle())
     } else if (this.node.type === 'Stack') {
       Stack({ alignContent: Alignment.BottomStart }) {
         this.RenderChildren()
@@ -48,6 +54,7 @@ export struct ArkUiNodeRenderer {
       .opacity(this.node.style.opacity)
       .shadow({ radius: this.node.style.shadowRadius, color: this.node.style.shadowColor,
         offsetX: 0, offsetY: this.node.style.shadowOffsetY })
+      .backgroundBlurStyle(this.blurStyle())
     } else if (this.node.type === 'Text' || this.node.type === 'Badge') {
       Text(this.displayText())
         .fontSize(this.node.style.fontSize)
@@ -92,6 +99,7 @@ export struct ArkUiNodeRenderer {
         .backgroundColor(this.node.style.backgroundColor)
         .borderRadius(this.node.style.borderRadius)
         .padding(this.paddingValue())
+        .enabled(this.isNodeEnabled())
         .onClick(() => { this.invokeFirstAction(); })
     } else if (this.node.type === 'TextInput') {
       TextInput({ text: this.boundValue(), placeholder: this.prop('placeholder') })
@@ -118,6 +126,7 @@ export struct ArkUiNodeRenderer {
       Row({ space: 10 }) {
         Text(this.prop('text')).fontSize(this.node.style.fontSize).fontColor(this.node.style.foregroundColor).layoutWeight(1)
         Toggle({ type: ToggleType.Switch, isOn: this.boundValue() === 'true' })
+          .enabled(this.isNodeEnabled())
           .onChange((value: boolean) => { this.onValueChange(this.node.binding, value ? 'true' : 'false'); })
       }.width('100%').padding(this.paddingValue()).backgroundColor(this.node.style.backgroundColor).borderRadius(this.node.style.borderRadius)
     } else if (this.node.type === 'ChoiceChips' || this.node.type === 'SegmentedControl') {
@@ -129,9 +138,10 @@ export struct ArkUiNodeRenderer {
           ForEach(this.choiceItems(), (item: string) => {
             Button(item)
               .height(36)
-              .backgroundColor(this.boundValue() === item ? this.node.style.foregroundColor : this.node.style.backgroundColor)
-              .fontColor(this.boundValue() === item ? this.node.style.backgroundColor : this.node.style.foregroundColor)
+              .backgroundColor(this.isChoiceSelected(item) ? this.node.style.foregroundColor : this.node.style.backgroundColor)
+              .fontColor(this.isChoiceSelected(item) ? this.node.style.backgroundColor : this.node.style.foregroundColor)
               .borderRadius(this.node.style.borderRadius)
+              .enabled(this.isNodeEnabled())
               .onClick(() => { this.onValueChange(this.node.binding, item); })
           }, (item: string) => item)
         }
@@ -193,6 +203,17 @@ export struct ArkUiNodeRenderer {
     return this.conditionPass(this.node.visibleWhen);
   }
 
+  private isNodeEnabled(): boolean {
+    return this.conditionPass(this.node.enabledWhen);
+  }
+
+  private isChoiceSelected(item: string): boolean {
+    if (this.node.selectedWhen !== undefined && this.node.selectedWhen.path.length > 0) {
+      return this.conditionPass(this.node.selectedWhen) && this.boundValue() === item;
+    }
+    return this.boundValue() === item;
+  }
+
   private conditionPass(condition: LocalCondition | undefined): boolean {
     if (condition === undefined || condition.path.length === 0) { return true; }
     let actual: string = this.session.data[condition.path] === undefined ? '' : this.session.data[condition.path];
@@ -209,10 +230,33 @@ export struct ArkUiNodeRenderer {
     return true;
   }
 
-  private invokeFirstAction(): void { if (this.node.actions.length > 0) { this.onAction(this.node.actions[0]); } }
+  private invokeFirstAction(): void {
+    if (this.node.actions.length > 0 && this.isNodeEnabled()) { this.onAction(this.node.actions[0]); }
+  }
   private progressValue(): number { let value: number = Number.parseInt(this.boundValue()); return Number.isNaN(value) ? 0 : value; }
   private fontWeight(): FontWeight { if (this.node.style.fontWeight === 'bold') { return FontWeight.Bold; } if (this.node.style.fontWeight === 'semibold') { return FontWeight.Medium; } if (this.node.style.fontWeight === 'medium') { return FontWeight.Medium; } return FontWeight.Normal; }
   private textAlign(): TextAlign { if (this.node.style.textAlign === 'center') { return TextAlign.Center; } if (this.node.style.textAlign === 'end') { return TextAlign.End; } return TextAlign.Start; }
   private paddingValue(): Padding { return { top: this.node.style.paddingTop, right: this.node.style.paddingRight, bottom: this.node.style.paddingBottom, left: this.node.style.paddingLeft }; }
   private marginValue(): Margin { return { top: this.node.style.marginTop, right: this.node.style.marginRight, bottom: this.node.style.marginBottom, left: this.node.style.marginLeft }; }
+  private horizontalAlign(): HorizontalAlign {
+    if (this.node.style.align === 'center') { return HorizontalAlign.Center; }
+    if (this.node.style.align === 'end') { return HorizontalAlign.End; }
+    return HorizontalAlign.Start;
+  }
+  private verticalAlign(): VerticalAlign {
+    if (this.node.style.align === 'center') { return VerticalAlign.Center; }
+    if (this.node.style.align === 'end') { return VerticalAlign.Bottom; }
+    return VerticalAlign.Top;
+  }
+  private justifyAlign(): FlexAlign {
+    if (this.node.style.justify === 'center') { return FlexAlign.Center; }
+    if (this.node.style.justify === 'between') { return FlexAlign.SpaceBetween; }
+    if (this.node.style.justify === 'end') { return FlexAlign.End; }
+    return FlexAlign.Start;
+  }
+  private blurStyle(): BlurStyle {
+    if (this.node.style.blurStyle === 'thin') { return BlurStyle.Thin; }
+    if (this.node.style.blurStyle === 'regular') { return BlurStyle.Regular; }
+    return BlurStyle.NONE;
+  }
 }

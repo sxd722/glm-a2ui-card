@@ -5,6 +5,7 @@ import {
   ArkUiNode,
   ArkUiNodeType,
   ArkUiPage,
+  ArkUiPageParseResult,
   ArkUiSessionState,
   ArkUiSpec,
   ArkUiToolAction,
@@ -16,6 +17,7 @@ import {
 } from './ArkUiTypes';
 import { TravelInputs, ToolResult } from './SkillTypes';
 import { runTravelTool } from './SkillWorkbench';
+import { RunnerSessionSnapshot } from './SkillAppTypes';
 
 const NODE_TYPES: string[] = ['Column', 'Row', 'Stack', 'Scroll', 'Grid', 'List', 'Text', 'Image', 'Button',
   'TextInput', 'TextArea', 'Toggle', 'ChoiceChips', 'SegmentedControl', 'Progress', 'Divider', 'Spacer', 'Badge', 'DynamicSlot'];
@@ -23,8 +25,7 @@ const ACTION_KINDS: string[] = ['navigate', 'back', 'localMutate', 'invokeTool',
 const MUTATION_OPS: string[] = ['set', 'toggle', 'increment', 'append', 'remove', 'merge', 'clear'];
 const CONDITION_OPS: string[] = ['exists', 'eq', 'neq', 'truthy', 'contains', 'gt', 'gte', 'lt', 'lte'];
 
-export function defaultTravelNestedApp(): ArkUiSpec {
-  return {
+export const TRAVEL_DEMO_ARK_UI_SPEC: ArkUiSpec = {
     schemaVersion: 'arkui-tailwind-2', appId: 'travel-skill-app', title: '成都轻旅行',
     subtitle: '由 Agent Skill 驱动的原生行程工作台', initialPageId: 'home',
     theme: { colors: morandiColors() },
@@ -72,7 +73,10 @@ export function defaultTravelNestedApp(): ArkUiSpec {
         ])
       ]))
     ]
-  };
+};
+
+export function defaultTravelNestedApp(): ArkUiSpec {
+  return JSON.parse(JSON.stringify(TRAVEL_DEMO_ARK_UI_SPEC)) as ArkUiSpec;
 }
 
 export function defaultWeatherArkUiSpec(): ArkUiSpec {
@@ -102,6 +106,37 @@ export function createNestedSession(spec: ArkUiSpec): ArkUiSessionState {
     assets: [], status: 'idle', agentTrace: 'ArkUiSpec 已编译为原生 UI。', errorMessage: '' };
 }
 
+export function createTravelDemoSession(): ArkUiSessionState {
+  let session: ArkUiSessionState = createNestedSession(defaultTravelNestedApp());
+  session.data['departure'] = '上海';
+  session.data['destination'] = '成都';
+  session.data['dates'] = '3 天 2 晚';
+  session.data['budget'] = '5000 元';
+  session.data['preferences'] = '美食、轻松游';
+  session.agentTrace = '旅行 Demo 示例数据已载入。';
+  return session;
+}
+
+export function createRunnerSessionSnapshot(session: ArkUiSessionState, appId: string,
+  sessionId: string): RunnerSessionSnapshot {
+  return { sessionId: sessionId, appId: appId, activePageId: session.activePageId,
+    routeStack: session.routeStack.slice(), data: JSON.parse(JSON.stringify(session.data)) as Record<string, string>,
+    assets: JSON.parse(JSON.stringify(session.assets)) as LocalImageAsset[], status: session.status,
+    agentTrace: session.agentTrace, errorMessage: session.errorMessage, updatedAt: Date.now() };
+}
+
+export function restoreRunnerSession(spec: ArkUiSpec, snapshot: RunnerSessionSnapshot): ArkUiSessionState {
+  let session: ArkUiSessionState = createNestedSession(spec);
+  session.activePageId = snapshot.activePageId.length > 0 ? snapshot.activePageId : spec.initialPageId;
+  session.routeStack = snapshot.routeStack.length > 0 ? snapshot.routeStack.slice() : [session.activePageId];
+  session.data = JSON.parse(JSON.stringify(snapshot.data)) as Record<string, string>;
+  session.assets = JSON.parse(JSON.stringify(snapshot.assets)) as LocalImageAsset[];
+  session.status = snapshot.status;
+  session.agentTrace = snapshot.agentTrace;
+  session.errorMessage = snapshot.errorMessage;
+  return session;
+}
+
 export function normalizeNestedApp(raw: string, current: ArkUiSpec): ArkUiSpec {
   return normalizeArkUiSpec(raw, current);
 }
@@ -117,13 +152,22 @@ export function normalizeArkUiSpec(raw: string, fallback: ArkUiSpec): ArkUiSpec 
 }
 
 export function normalizeArkUiPage(raw: string, fallback: ArkUiPage): ArkUiPage {
+  let result: ArkUiPageParseResult = normalizeArkUiPageResult(raw, fallback);
+  return result.ok && result.value !== undefined ? result.value : fallback;
+}
+
+export function normalizeArkUiPageResult(raw: string, fallback: ArkUiPage): ArkUiPageParseResult {
+  let repairedFields: string[] = [];
   try {
     let parsed: ArkUiPage = JSON.parse(cleanJson(raw)) as ArkUiPage;
-    let repaired: ArkUiPage = sanitizePage(parsed, 0);
-    if (repaired.id.length > 0 && validNode(repaired.root, 0)) { return repaired; }
+    let repaired: ArkUiPage = sanitizePage(parsed, 0, repairedFields);
+    if (repaired.id.length > 0 && validNode(repaired.root, 0)) {
+      return { ok: true, value: repaired, diagnostics: [], repairedFields: repairedFields };
+    }
+    return { ok: false, value: undefined, diagnostics: ['ArkUiPage 缺少有效 root。'], repairedFields: repairedFields };
   } catch (e) {
+    return { ok: false, value: undefined, diagnostics: ['ArkUiPage JSON 无法解析。'], repairedFields: repairedFields };
   }
-  return fallback;
 }
 
 export function composeArkUiSpec(blueprintAppId: string, title: string, subtitle: string,
@@ -152,6 +196,10 @@ export function addNestedAsset(session: ArkUiSessionState, name: string, dataUrl
 
 export function reduceNestedAction(session: ArkUiSessionState, current: ArkUiAction): ArkUiSessionState {
   let next: ArkUiSessionState = cloneSession(session); next.errorMessage = '';
+  if (!guardsPass(next, current.guards)) {
+    next.errorMessage = '当前状态不满足该操作条件。';
+    return next;
+  }
   if (current.kind === 'navigate') { navigate(next, current.targetPageId); }
   else if (current.kind === 'back' && next.routeStack.length > 1) { next.routeStack.pop(); next.activePageId = next.routeStack[next.routeStack.length - 1]; }
   else if (current.kind === 'reset') { return resetNestedSession(next); }
@@ -191,11 +239,11 @@ function sanitizeSpec(spec: ArkUiSpec, fallback: ArkUiSpec): ArkUiSpec {
   return repaired;
 }
 
-function sanitizePage(pageValue: ArkUiPage, index: number): ArkUiPage {
+function sanitizePage(pageValue: ArkUiPage, index: number, repairedFields: string[] = []): ArkUiPage {
   let current: ArkUiPage = pageValue;
-  if (typeof current.id !== 'string' || current.id.length === 0) { current.id = 'page-' + index.toString(); }
-  if (typeof current.title !== 'string') { current.title = ''; }
-  if (typeof current.scroll !== 'boolean') { current.scroll = true; }
+  if (typeof current.id !== 'string' || current.id.length === 0) { current.id = 'page-' + index.toString(); repairedFields.push('id'); }
+  if (typeof current.title !== 'string') { current.title = ''; repairedFields.push('title'); }
+  if (typeof current.scroll !== 'boolean') { current.scroll = true; repairedFields.push('scroll'); }
   current.root = sanitizeNode(current.root, current.id + '-root', 0); return current;
 }
 

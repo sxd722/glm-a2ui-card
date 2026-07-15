@@ -148,8 +148,12 @@ function applyToken(style: ResolvedArkUiStyle, token: string, theme: ArkUiTheme)
   if (token.indexOf('pb-') === 0) { style.paddingBottom = spacing(token.substring(3)); return; }
   if (token.indexOf('pl-') === 0) { style.paddingLeft = spacing(token.substring(3)); return; }
   if (token.indexOf('m-') === 0) { setMargin(style, spacing(token.substring(2))); return; }
+  if (token.indexOf('mx-') === 0) { let v: number = spacing(token.substring(3)); style.marginLeft = v; style.marginRight = v; return; }
+  if (token.indexOf('my-') === 0) { let v: number = spacing(token.substring(3)); style.marginTop = v; style.marginBottom = v; return; }
   if (token.indexOf('mt-') === 0) { style.marginTop = spacing(token.substring(3)); return; }
+  if (token.indexOf('mr-') === 0) { style.marginRight = spacing(token.substring(3)); return; }
   if (token.indexOf('mb-') === 0) { style.marginBottom = spacing(token.substring(3)); return; }
+  if (token.indexOf('ml-') === 0) { style.marginLeft = spacing(token.substring(3)); return; }
   if (token.indexOf('gap-') === 0) { style.gap = spacing(token.substring(4)); return; }
   if (token.indexOf('h-') === 0) { style.height = spacing(token.substring(2)); return; }
   if (token.indexOf('rounded') === 0) { style.borderRadius = radius(token); return; }

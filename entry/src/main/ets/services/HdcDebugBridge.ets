@@ -11,6 +11,7 @@ export type HdcDebugAction = 'setForgeSource' | 'runForgeAnalyze' | 'runForgePre
   'setNestedFields' | 'runNestedAction' | 'loadForgeImageFromDevice' | 'loadForgeImageDataUrl' |
   'resetForgeImageTransfer' | 'appendForgeImageChunk' | 'finishForgeImageTransfer' |
   'exportForgeArtifacts' | 'exportCurrentArtifacts' | 'loadTravelDemo' | 'resetWorkbench';
+export type HdcDebugScope = 'forge' | 'runner' | 'any';
 
 export interface HdcDebugCommand {
   requestId: string;
@@ -131,11 +132,16 @@ export function enqueueHdcDebugCommand(command: HdcDebugCommand): boolean {
   return true;
 }
 
-export function takeNextHdcDebugCommand(): HdcDebugCommand | undefined {
-  if (pendingCommands.length === 0) {
-    return undefined;
+export function takeNextHdcDebugCommand(scope: HdcDebugScope = 'any'): HdcDebugCommand | undefined {
+  for (let i: number = 0; i < pendingCommands.length; i++) {
+    let current: HdcDebugCommand = pendingCommands[i];
+    let currentScope: HdcDebugScope = debugScope(current.action);
+    if (scope === 'any' || currentScope === scope || currentScope === 'any') {
+      pendingCommands.splice(i, 1);
+      return current;
+    }
   }
-  return pendingCommands.shift();
+  return undefined;
 }
 
 export function recordHdcDebugResult(result: HdcDebugResult): void {
@@ -222,4 +228,18 @@ function isHdcDebugAction(value: string): boolean {
     value === 'resetForgeImageTransfer' || value === 'appendForgeImageChunk' ||
     value === 'finishForgeImageTransfer' || value === 'exportForgeArtifacts' || value === 'exportCurrentArtifacts' ||
     value === 'loadTravelDemo' || value === 'resetWorkbench';
+}
+
+function debugScope(action: HdcDebugAction): HdcDebugScope {
+  if (action === 'setNestedFields' || action === 'runNestedAction' || action === 'exportCurrentArtifacts') {
+    return 'runner';
+  }
+  if (action === 'setForgeSource' || action === 'runForgeAnalyze' || action === 'runForgePreview' ||
+    action === 'installForgePreview' || action === 'runForgePipeline' || action === 'setSkillFields' ||
+    action === 'loadForgeImageFromDevice' || action === 'loadForgeImageDataUrl' ||
+    action === 'resetForgeImageTransfer' || action === 'appendForgeImageChunk' ||
+    action === 'finishForgeImageTransfer' || action === 'exportForgeArtifacts') {
+    return 'forge';
+  }
+  return 'any';
 }
