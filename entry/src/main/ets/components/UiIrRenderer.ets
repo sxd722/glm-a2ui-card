@@ -29,11 +29,11 @@ export struct UiIrRenderer {
       Column({ space: this.style().gap }) { this.RenderChildren(); }
         .width(this.style().widthFull ? '100%' : undefined).padding({ top: this.style().paddingTop, right: this.style().paddingRight, bottom: this.style().paddingBottom, left: this.style().paddingLeft })
         .backgroundColor(this.style().backgroundColor).borderRadius(this.style().borderRadius).shadow({ radius: this.style().shadowRadius, color: this.style().shadowColor, offsetX: 0, offsetY: this.style().shadowOffsetY })
-        .alignItems(this.horizontalAlign(this.style())).justifyContent(this.flexAlign(this.style()));
+        .alignItems(this.horizontalAlign(this.style())).justifyContent(this.flexAlign(this.style())).layoutWeight(this.style().layoutWeight);
     } else if (this.node.component === 'Row') {
       Row({ space: this.style().gap }) { this.RenderChildren(); }
         .width(this.style().widthFull ? '100%' : undefined).padding({ top: this.style().paddingTop, right: this.style().paddingRight, bottom: this.style().paddingBottom, left: this.style().paddingLeft })
-        .backgroundColor(this.style().backgroundColor).borderRadius(this.style().borderRadius).alignItems(this.verticalAlign(this.style())).justifyContent(this.flexAlign(this.style()));
+        .backgroundColor(this.style().backgroundColor).borderRadius(this.style().borderRadius).alignItems(this.verticalAlign(this.style())).justifyContent(this.flexAlign(this.style())).layoutWeight(this.style().layoutWeight);
     } else if (this.node.component === 'Stack') {
       Stack({ alignContent: Alignment.BottomStart }) { this.RenderChildren(); }
         .width(this.style().widthFull ? '100%' : undefined).height(this.style().height > 0 ? this.style().height : 180).borderRadius(this.style().borderRadius)
