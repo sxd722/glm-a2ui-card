@@ -641,7 +641,7 @@ struct Index {
         .width('100%')
         .backgroundColor('#7A8A99')
         .onClick(() => {
-          this.nestedSession = createNestedSession(normalizeNestedApp(this.nestedDslText));
+          this.nestedSession = createNestedSession(normalizeNestedApp(this.nestedDslText, this.forgeDraft.uiSpec));
           this.nestedSession.agentTrace = '已应用受控 ArkUiSpec Tailwind DSL。';
         })
     }
@@ -1433,16 +1433,12 @@ struct Index {
       apiKey: this.apiKey,
       model: GLM_DEFAULT_MODEL
     };
-    let blueprint: AppBlueprint = fallback;
+    let blueprint: AppBlueprint = this.forgeDraft.blueprint;
     let primaryError: string = '';
     try {
       this.statusText = 'glm-5.2 正在根据 SkillManifest 设计页面计划...';
       this.forgeBlueprintJson = await requestAppBlueprintFromGlm(this.forgeDraft.manifest,
-        this.forgeAssetIds(), config, (partialContent: string): void => {
-          this.forgeBlueprintJson = partialContent;
-          this.statusText = GLM_DEFAULT_MODEL + ' 正在流式生成 AppBlueprint：' +
-            partialContent.length.toString() + ' 字符';
-        });
+        this.forgeAssetIds(), config);
       blueprint = normalizeAppBlueprint(this.forgeBlueprintJson, fallback);
       if (blueprint === fallback) {
         throw new Error('glm-5.2 返回内容未通过 AppBlueprint 校验');
@@ -1470,8 +1466,11 @@ struct Index {
         let fallbackErr: BusinessError = fallbackError as BusinessError;
         trace = 'UI 设计失败：' + GLM_DEFAULT_MODEL + '：' + primaryError +
           '；' + GLM_BLUEPRINT_FALLBACK_MODEL + '：' + fallbackErr.message;
-        blueprint = fallback;
-        trace = trace + '；已使用本地页面计划继续逐页生成。';
+        this.forgeDraft.trace = trace;
+        this.forgeDraft.errorMessage = trace;
+        this.nestedSession.errorMessage = trace;
+        this.statusText = 'UI 生成已终止；已保留当前 Blueprint，不会替换为本地模板。';
+        return;
       }
     }
     this.nestedSession.errorMessage = '';
@@ -1485,10 +1484,7 @@ struct Index {
         this.statusText = GLM_DEFAULT_MODEL + ' 正在生成页面 ' + (i + 1).toString() + '/' +
           blueprint.pages.length.toString() + '：' + blueprint.pages[i].title;
         pageRaw = await requestArkUiPageFromGlm(this.forgeDraft.manifest, blueprint, blueprint.pages[i],
-          this.forgeAssetIds(), config, (partialContent: string): void => {
-            this.statusText = GLM_DEFAULT_MODEL + ' 流式生成 ' + blueprint.pages[i].title + '：' +
-              partialContent.length.toString() + ' 字符';
-          });
+          this.forgeAssetIds(), config);
         page = normalizeArkUiPage(pageRaw, localPage);
         if (page === localPage) { throw new Error('页面 JSON 未通过 ArkUiSpec 校验'); }
       } catch (pageError) {
@@ -1499,8 +1495,17 @@ struct Index {
           pageRaw = await requestArkUiPageFromGlm(this.forgeDraft.manifest, blueprint, blueprint.pages[i],
             this.forgeAssetIds(), pageFallbackConfig);
           page = normalizeArkUiPage(pageRaw, localPage);
+          if (page === localPage) { throw new Error('兜底模型页面 JSON 未通过 ArkUiSpec 校验'); }
         } catch (fallbackPageError) {
-          page = localPage;
+          let pageErr: BusinessError = pageError as BusinessError;
+          let fallbackPageErr: BusinessError = fallbackPageError as BusinessError;
+          trace = '页面生成失败：' + blueprint.pages[i].title + '；' + GLM_DEFAULT_MODEL + '：' +
+            pageErr.message + '；' + GLM_BLUEPRINT_FALLBACK_MODEL + '：' + fallbackPageErr.message;
+          this.forgeDraft.trace = trace;
+          this.forgeDraft.errorMessage = trace;
+          this.nestedSession.errorMessage = trace;
+          this.statusText = '页面生成已终止；已保留当前 ArkUiSpec，不会注入本地旅行页面。';
+          return;
         }
       }
       page.id = blueprint.pages[i].id;
@@ -1563,7 +1568,7 @@ struct Index {
       return await requestSkillManifestFromGlmImage(imageDataUrl, assetIds, primaryConfig);
     } catch (error) {
       let err: BusinessError = error as BusinessError;
-      if (err.message.indexOf('120 秒') >= 0) {
+      if (err.message.indexOf('未返回') >= 0 || err.message.toLowerCase().indexOf('timeout') >= 0) {
         throw new Error(err.message);
       }
       this.statusText = GLM_VISION_MODEL + ' 连接或模型不兼容，正在切换视觉降级模型 ' + GLM_VISION_FALLBACK_MODEL + '...';
@@ -1596,14 +1601,11 @@ struct Index {
       }
       return;
     }
-    let shouldInvokeAgent: boolean = current.kind === 'invokeAgent' || current.handling === 'agent' ||
-      current.handling === 'localThenAgent';
+    // Action kind is authoritative. A malformed handling field must never promote a local UI event into a GLM request.
+    let shouldInvokeAgent: boolean = current.kind === 'invokeAgent';
     if (shouldInvokeAgent && this.apiKey.length > 0) {
       let config: GlmLocalConfig = { baseUrl: GLM_CODING_ENDPOINT, apiKey: this.apiKey, model: GLM_DEFAULT_MODEL };
       try {
-        if (current.handling === 'localThenAgent' && current.kind !== 'invokeAgent') {
-          this.nestedSession = reduceNestedAction(this.nestedSession, current);
-        }
         this.nestedSession.status = 'thinking';
         this.nestedSession.agentTrace = 'GLM 正在处理 UI 事件：' + current.label;
         let turn: RuntimeAgentTurnRequest = buildRuntimeAgentTurnRequest(this.nestedSession, current,
@@ -2159,8 +2161,8 @@ function trimDebugText(value: string): string {
 }
 
 function isDebugNestedActionKind(value: string): boolean {
-  return value === 'navigate' || value === 'back' || value === 'invokeAgent' ||
-    value === 'pickLocalImage' || value === 'reset';
+  return value === 'navigate' || value === 'back' || value === 'localMutate' || value === 'invokeTool' ||
+    value === 'invokeAgent' || value === 'pickLocalImage' || value === 'reset';
 }
 
 function isDebugNestedActionHandling(value: string): boolean {

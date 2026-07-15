@@ -1,9 +1,30 @@
 export type ArkUiNodeType = 'Column' | 'Row' | 'Stack' | 'Scroll' | 'Grid' | 'List' |
   'Text' | 'Image' | 'Button' | 'TextInput' | 'TextArea' | 'Toggle' | 'Progress' |
-  'Divider' | 'Spacer' | 'Badge' | 'DynamicSlot';
+  'ChoiceChips' | 'SegmentedControl' | 'Divider' | 'Spacer' | 'Badge' | 'DynamicSlot';
 
-export type ArkUiActionKind = 'navigate' | 'back' | 'invokeAgent' | 'pickLocalImage' | 'reset';
+export type ArkUiActionKind = 'navigate' | 'back' | 'localMutate' | 'invokeTool' | 'invokeAgent' | 'pickLocalImage' | 'reset';
 export type ArkUiActionHandling = 'local' | 'agent' | 'localThenAgent';
+
+export type LocalMutationOp = 'set' | 'toggle' | 'increment' | 'append' | 'remove' | 'merge' | 'clear';
+
+export interface LocalMutation {
+  op: LocalMutationOp;
+  path: string;
+  value: string;
+  valueFrom: string;
+}
+
+export interface LocalCondition {
+  path: string;
+  op: 'exists' | 'eq' | 'neq' | 'truthy' | 'contains' | 'gt' | 'gte' | 'lt' | 'lte';
+  value: string;
+}
+
+export interface ArkUiToolAction {
+  name: string;
+  args: Record<string, string>;
+  resultBindings: Record<string, string>;
+}
 
 export interface ArkUiAction {
   id: string;
@@ -12,11 +33,15 @@ export interface ArkUiAction {
   targetPageId: string;
   payload: string;
   handling: ArkUiActionHandling;
+  effects?: LocalMutation[];
+  guards?: LocalCondition[];
+  tool?: ArkUiToolAction;
 }
 
 export interface ArkUiRepeatBinding {
   source: string;
   itemAlias: string;
+  keyPath?: string;
 }
 
 export interface ArkUiNode {
@@ -26,6 +51,9 @@ export interface ArkUiNode {
   props: Record<string, string>;
   binding: string;
   repeat?: ArkUiRepeatBinding;
+  visibleWhen?: LocalCondition;
+  enabledWhen?: LocalCondition;
+  selectedWhen?: LocalCondition;
   actions: ArkUiAction[];
   children: ArkUiNode[];
 }
@@ -93,6 +121,9 @@ export interface CompiledArkUiNode {
   repeat?: ArkUiRepeatBinding;
   actions: ArkUiAction[];
   children: CompiledArkUiNode[];
+  visibleWhen?: LocalCondition;
+  enabledWhen?: LocalCondition;
+  selectedWhen?: LocalCondition;
   style: ResolvedArkUiStyle;
   // Deprecated renderer fields stay internal for one migration release; they are never accepted in ArkUiSpec JSON.
   kind: string;
