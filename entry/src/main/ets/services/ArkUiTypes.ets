@@ -65,6 +65,13 @@ export interface ArkUiPage {
   root: ArkUiNode;
 }
 
+export interface ArkUiPageParseResult {
+  ok: boolean;
+  value: ArkUiPage | undefined;
+  diagnostics: string[];
+  repairedFields: string[];
+}
+
 export interface ArkUiTheme {
   colors: Record<string, string>;
 }

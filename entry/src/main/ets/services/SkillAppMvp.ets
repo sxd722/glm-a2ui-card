@@ -2,6 +2,7 @@ import { ArkUiSpec } from './ArkUiTypes';
 import { defaultTravelNestedApp, defaultWeatherArkUiSpec, normalizeArkUiSpec } from './NestedAppService';
 import {
   AppBlueprint,
+  AppBlueprintParseResult,
   AppPagePlan,
   ForgeDraft,
   InstalledSkillApp,
@@ -69,14 +70,18 @@ export function normalizeSkillManifest(raw: string, fallback: SkillManifest): Sk
   return fallback;
 }
 
-export function normalizeAppBlueprint(raw: string, fallback: AppBlueprint): AppBlueprint {
+export function normalizeAppBlueprint(raw: string, fallback: AppBlueprint): AppBlueprintParseResult {
+  let repairedFields: string[] = [];
   try {
     let parsed: AppBlueprint = JSON.parse(cleanJson(raw)) as AppBlueprint;
-    let repaired: AppBlueprint = sanitizeBlueprint(parsed, fallback);
-    if (repaired.appId.length > 0 && repaired.skillId.length > 0 && repaired.pages.length > 0) { return repaired; }
+    let repaired: AppBlueprint = sanitizeAppBlueprint(parsed, fallback, repairedFields);
+    if (isValidAppBlueprint(repaired)) {
+      return { ok: true, value: repaired, diagnostics: [], repairedFields: repairedFields };
+    }
+    return { ok: false, value: undefined, diagnostics: ['AppBlueprint 缺少有效 pages 或关键元数据。'], repairedFields: repairedFields };
   } catch (e) {
+    return { ok: false, value: undefined, diagnostics: ['AppBlueprint JSON 无法解析。'], repairedFields: repairedFields };
   }
-  return fallback;
 }
 
 export function compileBlueprint(blueprint: AppBlueprint, spec: ArkUiSpec): ArkUiSpec {
@@ -172,25 +177,48 @@ function sanitizeManifest(value: SkillManifest, fallback: SkillManifest): SkillM
   return m;
 }
 
-function sanitizeBlueprint(value: AppBlueprint, fallback: AppBlueprint): AppBlueprint {
+export function sanitizeAppBlueprint(value: AppBlueprint, fallback: AppBlueprint,
+  repairedFields: string[] = []): AppBlueprint {
   let b: AppBlueprint = JSON.parse(JSON.stringify(value)) as AppBlueprint;
-  if (typeof b.schemaVersion !== 'string') { b.schemaVersion = SCHEMA_VERSION; }
-  if (typeof b.appId !== 'string' || b.appId.length === 0) { b.appId = fallback.appId; }
-  if (typeof b.skillId !== 'string' || b.skillId.length === 0) { b.skillId = fallback.skillId; }
-  if (typeof b.title !== 'string') { b.title = fallback.title; } if (typeof b.summary !== 'string') { b.summary = ''; }
-  if (typeof b.homePattern !== 'string') { b.homePattern = ''; } if (typeof b.runtimePrompt !== 'string') { b.runtimePrompt = ''; }
-  b.palette = strings(b.palette); if (!Array.isArray(b.dynamicSlots)) { b.dynamicSlots = []; }
-  if (!Array.isArray(b.componentRecipes)) { b.componentRecipes = []; }
+  if (typeof b.schemaVersion !== 'string') { b.schemaVersion = SCHEMA_VERSION; repairedFields.push('schemaVersion'); }
+  if (typeof b.appId !== 'string' || b.appId.length === 0) { b.appId = fallback.appId; repairedFields.push('appId'); }
+  if (typeof b.skillId !== 'string' || b.skillId.length === 0) { b.skillId = fallback.skillId; repairedFields.push('skillId'); }
+  if (typeof b.title !== 'string' || b.title.length === 0) { b.title = fallback.title; repairedFields.push('title'); }
+  if (typeof b.summary !== 'string') { b.summary = ''; repairedFields.push('summary'); }
+  if (typeof b.homePattern !== 'string') { b.homePattern = ''; repairedFields.push('homePattern'); }
+  if (typeof b.runtimePrompt !== 'string') { b.runtimePrompt = ''; repairedFields.push('runtimePrompt'); }
+  if (!Array.isArray(b.palette)) { b.palette = fallback.palette; repairedFields.push('palette'); }
+  b.palette = strings(b.palette);
+  if (!Array.isArray(b.dynamicSlots)) { b.dynamicSlots = []; repairedFields.push('dynamicSlots'); }
+  if (!Array.isArray(b.componentRecipes)) { b.componentRecipes = []; repairedFields.push('componentRecipes'); }
   // Missing page plans are not repairable metadata. Keep them invalid so the caller can stop instead of
   // silently replacing an unrelated Skill with the local travel/weather blueprint.
   if (!Array.isArray(b.pages)) { b.pages = []; }
   b.pages = b.pages.slice(0, 5);
+  let pageIds: string[] = [];
   for (let i: number = 0; i < b.pages.length; i++) {
-    let p: AppPagePlan = b.pages[i]; if (typeof p.id !== 'string' || p.id.length === 0) { p.id = 'page-' + i.toString(); }
-    if (typeof p.title !== 'string') { p.title = p.id; } if (typeof p.purpose !== 'string') { p.purpose = ''; }
-    if (typeof p.primaryAction !== 'string') { p.primaryAction = ''; }
+    let p: AppPagePlan = b.pages[i];
+    if (typeof p.id !== 'string' || p.id.length === 0) { p.id = 'page-' + i.toString(); repairedFields.push('pages[' + i.toString() + '].id'); }
+    let baseId: string = p.id;
+    let suffix: number = 2;
+    while (pageIds.indexOf(p.id) >= 0) { p.id = baseId + '-' + suffix.toString(); suffix++; }
+    if (p.id !== baseId) { repairedFields.push('pages[' + i.toString() + '].id'); }
+    pageIds.push(p.id);
+    if (typeof p.title !== 'string' || p.title.length === 0) { p.title = p.id; repairedFields.push('pages[' + i.toString() + '].title'); }
+    if (typeof p.purpose !== 'string') { p.purpose = ''; repairedFields.push('pages[' + i.toString() + '].purpose'); }
+    if (typeof p.primaryAction !== 'string') { p.primaryAction = ''; repairedFields.push('pages[' + i.toString() + '].primaryAction'); }
   }
   return b;
+}
+
+function isValidAppBlueprint(value: AppBlueprint): boolean {
+  if (value === undefined || value === null || value.appId.length === 0 || value.skillId.length === 0 ||
+    value.title.length === 0 || !Array.isArray(value.pages) || value.pages.length === 0) { return false; }
+  for (let i: number = 0; i < value.pages.length; i++) {
+    let page: AppPagePlan = value.pages[i];
+    if (page === undefined || page.id.length === 0 || page.title.length === 0) { return false; }
+  }
+  return true;
 }
 
 function runtimePrompt(manifest: SkillManifest): string { return 'Act as ' + manifest.skillName + '. Use only registered tools and return structured runtime patches.'; }
@@ -201,5 +229,28 @@ function tool(name: string, adapterId: string, implemented: boolean): ToolContra
 function plan(id: string, title: string, purpose: string, primaryAction: string): AppPagePlan { return { id: id, title: title, purpose: purpose, primaryAction: primaryAction }; }
 function strings(value: string[]): string[] { if (!Array.isArray(value)) { return []; } let out: string[] = []; for (let i: number = 0; i < value.length; i++) { if (typeof value[i] === 'string') { out.push(value[i]); } } return out; }
 function credentialRefs(manifest: SkillManifest): string[] { let refs: string[] = []; for (let i: number = 0; i < manifest.toolContracts.length; i++) { let ref: string = manifest.toolContracts[i].credentialRef; if (ref.length > 0 && refs.indexOf(ref) < 0) { refs.push(ref); } } return refs; }
-function cleanJson(raw: string): string { let cleaned: string = raw.replace('```json', '').replace('```', '').trim(); let start: number = cleaned.indexOf('{'); let end: number = cleaned.lastIndexOf('}'); return start >= 0 && end > start ? cleaned.substring(start, end + 1) : cleaned; }
+function cleanJson(raw: string): string {
+  let cleaned: string = raw.replace('```json', '').replace('```', '').trim();
+  let start: number = cleaned.indexOf('{');
+  if (start < 0) { return cleaned; }
+  let depth: number = 0;
+  let inString: boolean = false;
+  let escaped: boolean = false;
+  for (let i: number = start; i < cleaned.length; i++) {
+    let current: string = cleaned.charAt(i);
+    if (inString) {
+      if (escaped) { escaped = false; }
+      else if (current === '\\') { escaped = true; }
+      else if (current === '"') { inString = false; }
+      continue;
+    }
+    if (current === '"') { inString = true; }
+    else if (current === '{') { depth++; }
+    else if (current === '}') {
+      depth--;
+      if (depth === 0) { return cleaned.substring(start, i + 1); }
+    }
+  }
+  return cleaned;
+}
 function cloneDraft(draft: ForgeDraft): ForgeDraft { return JSON.parse(JSON.stringify(draft)) as ForgeDraft; }
