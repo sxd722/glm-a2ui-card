@@ -29,10 +29,11 @@ export function compileReactLite(source: string, context: ReactLiteCompileContex
   let appSubtitle: string = attrString(root, 'subtitle', context.blueprint.summary);
   let initialPageId: string = attrString(root, 'initialPage', context.blueprint.pages[0].id);
   let pages: UiIrPage[] = [];
+  let compileDiagnostics: ReactLiteDiagnostic[] = [];
   let rootChildren: ReactLiteAstNode[] = root.children;
   for (let i: number = 0; i < rootChildren.length; i++) {
     if (rootChildren[i].component !== 'Page') { continue; }
-    pages.push(compilePage(rootChildren[i], context));
+    pages.push(compilePage(rootChildren[i], context, compileDiagnostics));
   }
   if (pages.length === 0) {
     return { ok: false, value: undefined, diagnostics: [diagnostic('RL1014', 'AppShell 必须包含至少一个 Page。', root)], uiDiagnostics: [] };
@@ -50,33 +51,48 @@ export function compileReactLite(source: string, context: ReactLiteCompileContex
   for (let i: number = 0; i < context.manifest.toolContracts.length; i++) {
     if (context.manifest.toolContracts[i].implemented) { toolNames.push(context.manifest.toolContracts[i].name); }
   }
+  if (compileDiagnostics.length > 0) {
+    return { ok: false, value: undefined, diagnostics: parsed.diagnostics.concat(compileDiagnostics), uiDiagnostics: [] };
+  }
   let validation = validateUiIrSpec(spec, toolNames, context.localAssetIds);
   let uiDiagnostics: string[] = [];
   for (let i: number = 0; i < validation.diagnostics.length; i++) { uiDiagnostics.push(validation.diagnostics[i].message); }
   return { ok: validation.ok, value: validation.ok ? spec : undefined, diagnostics: parsed.diagnostics, uiDiagnostics: uiDiagnostics };
 }
 
-function compilePage(page: ReactLiteAstNode, context: ReactLiteCompileContext): UiIrPage {
+function compilePage(page: ReactLiteAstNode, context: ReactLiteCompileContext, diagnostics: ReactLiteDiagnostic[]): UiIrPage {
   let id: string = attrString(page, 'id', 'page-' + page.line.toString());
   let title: string = attrString(page, 'title', id);
   let preset: string = attrString(page, 'layoutPreset', inferPreset(page));
   let children: UiIrNode[] = [];
-  for (let i: number = 0; i < page.children.length; i++) { children.push(compileNode(page.children[i], preset)); }
+  for (let i: number = 0; i < page.children.length; i++) { children.push(compileNode(page.children[i], preset, diagnostics)); }
   let root: UiIrNode = elementNode(id + '-root', 'Column', {}, defaultClass('Page', preset), {}, children);
   return { id: id, title: title, scroll: attrBoolean(page, 'scroll', true), layoutPreset: preset, root: root };
 }
 
-function compileNode(node: ReactLiteAstNode, preset: string): UiIrNode {
+function compileNode(node: ReactLiteAstNode, preset: string, diagnostics: ReactLiteDiagnostic[] = []): UiIrNode {
   if (node.kind === 'text') {
     return elementNode('text-' + node.line.toString() + '-' + node.column.toString(), 'Text', propsFrom(node), 'text-sm text-ink', {}, []);
   }
   if (node.kind === 'if') {
     return { kind: 'if', id: 'if-' + node.line.toString() + '-' + node.column.toString(), component: 'Column', props: {}, binding: '', className: '', actions: {},
-      children: compileChildren(node.children, preset), condition: compileExpression(attrExpression(node, 'when')), itemAlias: '', keyPath: '' };
+      children: compileChildren(node.children, preset, diagnostics), condition: compileExpression(attrExpression(node, 'when')), itemAlias: '', keyPath: '' };
   }
   if (node.kind === 'forEach') {
     return { kind: 'forEach', id: 'each-' + node.line.toString() + '-' + node.column.toString(), component: 'Column', props: {}, binding: '', className: '', actions: {},
-      children: compileChildren(node.children, preset), source: compileExpression(attrExpression(node, 'items')), condition: undefined,
+      children: compileChildren(node.children, preset, diagnostics), source: compileExpression(attrExpression(node, 'items')), condition: undefined,
+      itemAlias: attrString(node, 'item', 'item'), keyPath: attrString(node, 'keyBy', 'id') };
+  }
+  if (node.kind === 'expression' && node.expression !== undefined) {
+    return compileExpressionNode(node.expression, preset, node, diagnostics);
+  }
+  if (node.component === 'ResultList') {
+    if (node.children.length === 0) {
+      diagnostics.push(diagnostic('RL_LIST_TEMPLATE_REQUIRED', 'ResultList 必须包含 item template；自闭合 ResultList 不会生成可渲染列表。', node));
+      return elementNode('invalid-result-list-' + node.line.toString(), 'EmptyState', {}, 'w-full p-4 bg-card rounded-xl', {}, []);
+    }
+    return { kind: 'forEach', id: 'result-list-' + node.line.toString() + '-' + node.column.toString(), component: 'Column', props: {}, binding: '', className: '', actions: {},
+      children: compileChildren(node.children, preset, diagnostics), source: compileExpression(attrExpression(node, 'items')), condition: undefined,
       itemAlias: attrString(node, 'item', 'item'), keyPath: attrString(node, 'keyBy', 'id') };
   }
   let component: string = canonicalComponent(node.component);
@@ -85,17 +101,51 @@ function compileNode(node: ReactLiteAstNode, preset: string): UiIrNode {
   let attributes: ReactLiteAstAttribute[] = node.attributes;
   for (let i: number = 0; i < attributes.length; i++) {
     let attribute: ReactLiteAstAttribute = attributes[i];
-    if (attribute.value !== undefined && ['onPress', 'onSubmit', 'onDismiss', 'onSelect', 'onReachEnd', 'onLongPress'].indexOf(attribute.name) >= 0) {
+    if (attribute.value !== undefined && ['onPress', 'onSubmit', 'onDismiss', 'onSelect', 'onReachEnd', 'onLongPress', 'onChange'].indexOf(attribute.name) >= 0) {
       actions[eventName(attribute.name)] = compileAction(attribute.value, node.line, node.column);
     }
   }
-  let children: UiIrNode[] = compileChildren(node.children, preset);
+  let children: UiIrNode[] = compileChildren(node.children, preset, diagnostics);
+  let binding: string = attrString(node, 'bind', '');
+  if (binding.length === 0 && ['ChoiceChips', 'SegmentedControl', 'Tabs'].indexOf(node.component) >= 0) {
+    let valueExpression = attrExpression(node, 'value');
+    if (valueExpression !== undefined && valueExpression.kind === 'path') { binding = valueExpression.path.join('.'); }
+  }
   return elementNode('node-' + node.line.toString() + '-' + node.column.toString(), component, propsFrom(node), className,
-    actions, children, attrString(node, 'bind', ''));
+    actions, children, binding);
 }
 
-function compileChildren(children: ReactLiteAstNode[], preset: string): UiIrNode[] {
-  let result: UiIrNode[] = []; for (let i: number = 0; i < children.length; i++) { result.push(compileNode(children[i], preset)); } return result;
+function compileChildren(children: ReactLiteAstNode[], preset: string, diagnostics: ReactLiteDiagnostic[] = []): UiIrNode[] {
+  let result: UiIrNode[] = []; for (let i: number = 0; i < children.length; i++) { result.push(compileNode(children[i], preset, diagnostics)); } return result;
+}
+
+function compileExpressionNode(expression: ReactLiteExpression, preset: string, sourceNode: ReactLiteAstNode,
+  diagnostics: ReactLiteDiagnostic[]): UiIrNode {
+  if (expression.kind === 'jsx' && expression.jsxNode !== undefined) { return compileNode(expression.jsxNode, preset, diagnostics); }
+  if (expression.kind === 'binary' && expression.operator === '&&' && expression.right !== undefined &&
+    expression.right.kind === 'jsx' && expression.right.jsxNode !== undefined) {
+    let child: UiIrNode = compileNode(expression.right.jsxNode, preset, diagnostics);
+    return { kind: 'if', id: 'if-' + sourceNode.line.toString() + '-' + sourceNode.column.toString(), component: 'Column', props: {}, binding: '', className: '', actions: {},
+      children: [child], condition: compileExpression(expression.left), itemAlias: '', keyPath: '' };
+  }
+  if (expression.kind === 'map' && expression.source !== undefined && expression.template !== undefined) {
+    let template: ReactLiteAstNode = expression.template;
+    let keyExpression: ReactLiteExpression | undefined = attrExpression(template, 'key');
+    let keyPath: string = expression.keyPath === undefined ? '' : expression.keyPath;
+    if (keyExpression !== undefined && keyExpression.kind === 'path') {
+      let parts: string[] = keyExpression.path;
+      if (parts.length > 1 && parts[0] === expression.parameter) { keyPath = parts.slice(1).join('.'); }
+    }
+    if (keyPath.length === 0) {
+      diagnostics.push(diagnostic('RL_MAP_KEY_REQUIRED', 'map 列表必须通过 key={item.id} 或 keyBy 提供稳定身份。', sourceNode));
+      keyPath = 'id';
+    }
+    return { kind: 'forEach', id: 'map-' + sourceNode.line.toString() + '-' + sourceNode.column.toString(), component: 'Column', props: {}, binding: '', className: '', actions: {},
+      children: [compileNode(template, preset, diagnostics)], source: compileExpression(expression.source), condition: undefined,
+      itemAlias: expression.parameter === undefined ? 'item' : expression.parameter, keyPath: keyPath };
+  }
+  diagnostics.push(diagnostic('RL_EXPRESSION_NODE_UNSUPPORTED', '表达式只能生成 JSX、条件 JSX 或 map 列表模板。', sourceNode));
+  return elementNode('invalid-expression-' + sourceNode.line.toString(), 'EmptyState', {}, 'w-full p-4 bg-card rounded-xl', {}, []);
 }
 
 function elementNode(id: string, componentName: string, props: Record<string, UiExpression>, className: string,
@@ -108,10 +158,10 @@ function propsFrom(node: ReactLiteAstNode): Record<string, UiExpression> {
   let props: Record<string, UiExpression> = {};
   for (let i: number = 0; i < node.attributes.length; i++) {
     let item: ReactLiteAstAttribute = node.attributes[i];
-    if (item.name === 'className' || item.name === 'bind' || item.name === 'onPress' || item.name === 'onSubmit' ||
+    if (item.name === 'className' || item.name === 'bind' || item.name === 'key' || item.name === 'value' || item.name === 'onPress' || item.name === 'onSubmit' ||
       item.name === 'onDismiss' || item.name === 'onSelect' || item.name === 'onReachEnd' || item.name === 'onLongPress' ||
-      item.name === 'item' || item.name === 'keyBy') { continue; }
-    if (item.value !== undefined) { props[item.name] = compileExpression(item.value); }
+      item.name === 'onChange' || item.name === 'item' || item.name === 'keyBy') { continue; }
+    if (item.value !== undefined) { props[item.name === 'options' ? 'items' : item.name] = compileExpression(item.value); }
     else if (item.booleanValue) { props[item.name] = literal(booleanValue(true)); }
     else if (item.stringValue.length > 0) { props[item.name] = literal(stringValue(item.stringValue)); }
   }
@@ -122,9 +172,12 @@ function compileAction(expression: ReactLiteExpression, line: number, column: nu
   let kind: UiActionKind = 'state.set'; let args: ReactLiteExpression[] = expression.args;
   let action: UiAction = { id: 'action-' + line.toString() + '-' + column.toString(), kind: kind, targetPageId: '', path: '', keyField: '',
     targetField: '', idPrefix: '', toolName: '', toolArgs: literal(nullValue()), resultBindings: {}, intent: '', assetSlotId: '', steps: [] };
+  if (expression.kind === 'lambda' && expression.body !== undefined) { return compileAction(expression.body, line, column); }
   if (expression.kind !== 'call') { return action; }
   let name: string = expression.callee;
   if (name === 'navigate') { action.kind = 'navigation.push'; action.targetPageId = literalText(args, 0); }
+  else if (name === 'popTo') { action.kind = 'navigation.popTo'; action.targetPageId = literalText(args, 0); }
+  else if (name === 'replace') { action.kind = 'navigation.replace'; action.targetPageId = literalText(args, 0); }
   else if (name === 'back') { action.kind = 'navigation.back'; }
   else if (name === 'resetApp') { action.kind = 'app.reset'; }
   else if (name === 'toggleState') { action.kind = 'state.toggle'; action.path = literalText(args, 0); }
@@ -137,9 +190,43 @@ function compileAction(expression: ReactLiteExpression, line: number, column: nu
   else if (name === 'toggleWhere') { action.kind = 'list.toggleWhere'; action.path = literalText(args, 0); action.keyField = literalText(args, 1); action.keyValue = args[2] === undefined ? literal(nullValue()) : compileExpression(args[2]); action.targetField = literalText(args, 3); }
   else if (name === 'pickLocalImage') { action.kind = 'asset.pickLocalImage'; action.assetSlotId = literalText(args, 0); }
   else if (name === 'invokeTool') { action.kind = 'tool.invoke'; action.toolName = literalText(args, 0); action.toolArgs = args[1] === undefined ? literal(nullValue()) : compileExpression(args[1]); action.targetPageId = literalText(args, 3); }
-  else if (name === 'invokeAgent') { action.kind = 'agent.invoke'; action.intent = literalText(args, 0); action.toolArgs = args[1] === undefined ? literal(nullValue()) : compileExpression(args[1]); action.targetPageId = literalText(args, 2); }
+  else if (name === 'invokeAgent') { compileAgentAction(action, args); }
+  else if (name === 'transaction') { action.kind = 'action.transaction'; for (let i: number = 0; i < args.length; i++) { action.steps.push(compileAction(args[i], line, column)); } }
   else if (name === 'sequence') { action.kind = 'action.sequence'; for (let i: number = 0; i < args.length; i++) { action.steps.push(compileAction(args[i], line, column)); } }
   return action;
+}
+
+function compileAgentAction(action: UiAction, args: ReactLiteExpression[]): void {
+  action.kind = 'agent.invoke';
+  if (args.length === 1 && args[0].kind === 'object') {
+    let intent = objectProperty(args[0], 'intent');
+    let agentArgs = objectProperty(args[0], 'args');
+    let bind = objectProperty(args[0], 'bind');
+    let status = objectProperty(args[0], 'status');
+    action.intent = expressionText(intent);
+    action.toolArgs = agentArgs === undefined ? literal(objectValue({})) : compileExpression(agentArgs);
+    action.statusPath = expressionText(status);
+    if (bind !== undefined && bind.kind === 'object') {
+      for (let i: number = 0; i < bind.properties.length; i++) {
+        action.resultBindings[bind.properties[i].key] = expressionText(bind.properties[i].value);
+      }
+    }
+  } else {
+    action.intent = literalText(args, 0);
+    action.toolArgs = args[1] === undefined ? literal(objectValue({})) : compileExpression(args[1]);
+    action.targetPageId = literalText(args, 2);
+  }
+}
+
+function objectProperty(expression: ReactLiteExpression, name: string): ReactLiteExpression | undefined {
+  for (let i: number = 0; i < expression.properties.length; i++) { if (expression.properties[i].key === name) { return expression.properties[i].value; } }
+  return undefined;
+}
+
+function expressionText(expression: ReactLiteExpression | undefined): string {
+  if (expression === undefined) { return ''; }
+  if (expression.kind === 'literal') { return expression.value; }
+  return expression.kind === 'path' ? expression.path.join('.') : '';
 }
 
 function compileExpression(expression: ReactLiteExpression | undefined): UiExpression {
@@ -148,6 +235,7 @@ function compileExpression(expression: ReactLiteExpression | undefined): UiExpre
     operator: expression.operator, items: [], properties: [], callee: expression.callee, args: [], };
   if (expression.kind === 'literal') { result.literalValue = literalUiValue(expression.value); }
   if (expression.kind === 'path') { result.root = expression.path.length > 0 ? expression.path[0] : ''; result.segments = expression.path.slice(1); }
+  if (expression.kind === 'map' || expression.kind === 'lambda' || expression.kind === 'jsx') { result.kind = 'literal'; result.literalValue = nullValue(); }
   if (expression.left !== undefined) { result.left = compileExpression(expression.left); }
   if (expression.right !== undefined) { result.right = compileExpression(expression.right); }
   if (expression.test !== undefined) { result.test = compileExpression(expression.test); }
@@ -184,6 +272,13 @@ function attrExpression(node: ReactLiteAstNode, name: string): ReactLiteExpressi
 function attrString(node: ReactLiteAstNode, name: string, fallback: string): string { for (let i: number = 0; i < node.attributes.length; i++) { let a = node.attributes[i]; if (a.name === name) { return a.stringValue.length > 0 ? a.stringValue : a.value === undefined ? fallback : literalText([a.value], 0); } } return fallback; }
 function attrBoolean(node: ReactLiteAstNode, name: string, fallback: boolean): boolean { for (let i: number = 0; i < node.attributes.length; i++) { let a = node.attributes[i]; if (a.name === name) { return a.booleanValue || a.stringValue === 'true' || (a.value !== undefined && a.value.value === 'true'); } } return fallback; }
 function canonicalComponent(component: string): string {
+  if (component === 'Hero') { return 'Stack'; }
+  if (component === 'Section' || component === 'FormGroup') { return 'Column'; }
+  if (component === 'InfoCard' || component === 'StatusBanner' || component === 'EmptyState') { return 'Card'; }
+  if (component === 'ActionBar') { return 'Row'; }
+  if (component === 'MetricGrid' || component === 'MediaGallery') { return 'Grid'; }
+  if (component === 'Timeline') { return 'List'; }
+  if (component === 'Tabs') { return 'ChoiceChips'; }
   return component;
 }
 function eventName(attribute: string): string {
@@ -192,6 +287,7 @@ function eventName(attribute: string): string {
   if (attribute === 'onDismiss') { return 'dismiss'; }
   if (attribute === 'onSelect') { return 'select'; }
   if (attribute === 'onReachEnd') { return 'reachEnd'; }
+  if (attribute === 'onChange') { return 'change'; }
   return 'longPress';
 }
 function defaultClass(component: string, preset: string): string {

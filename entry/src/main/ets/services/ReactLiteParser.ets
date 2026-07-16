@@ -1,11 +1,9 @@
 import { tokenizeReactLite } from './ReactLiteTokenizer';
 import { ReactLiteAst, ReactLiteAstAttribute, ReactLiteAstNode, ReactLiteDiagnostic, ReactLiteExpression,
   ReactLiteExpressionProperty, ReactLiteParseResult, ReactLiteToken } from './ReactLiteTypes';
+import { reactLiteComponentNames } from './ReactLiteCatalog';
 
-const COMPONENTS: string[] = ['AppShell', 'Page', 'SafeArea', 'Scroll', 'Column', 'Row', 'Stack', 'Grid', 'List',
-  'Card', 'Text', 'Image', 'Icon', 'Badge', 'Progress', 'Divider', 'Spacer', 'Button', 'IconButton', 'TextInput',
-  'TextArea', 'Toggle', 'Checkbox', 'ChoiceChips', 'SegmentedControl', 'Hero', 'Section', 'InfoCard', 'FormGroup',
-  'MetricGrid', 'Timeline', 'ResultList', 'MediaGallery', 'StatusBanner', 'Tabs', 'ActionBar', 'EmptyState', 'Sheet', 'If', 'ForEach'];
+const COMPONENTS: string[] = reactLiteComponentNames();
 const PRECEDENCE: Record<string, number> = { '??': 1, '||': 2, '&&': 3, '===': 4, '!==': 4, '==': 4, '!=': 4,
   '<': 5, '<=': 5, '>': 5, '>=': 5, '+': 6, '-': 6, '*': 7, '/': 7, '%': 7 };
 
@@ -85,7 +83,10 @@ class Parser {
       else if (this.checkKind('jsxText')) {
         let text = this.current(); this.index++; if (text.value.trim().length > 0) { children.push(textNode(text)); }
       } else if (this.checkValue('{')) {
-        this.index++; this.parseExpression(); this.expectValue('}', 'RL1001');
+        let expressionToken = this.current(); this.index++;
+        let expression: ReactLiteExpression = this.parseExpression();
+        this.expectValue('}', 'RL1001');
+        children.push(expressionNode(expression, expressionToken));
       } else { this.index++; }
     }
     this.expectValue('<', 'RL1001'); this.expectValue('/', 'RL1001');
@@ -131,12 +132,37 @@ class Parser {
     }
     if (this.checkValue('[')) { return this.parseArray(); }
     if (this.checkValue('{')) { return this.parseObject(); }
+    if (this.checkValue('<')) {
+      let jsx = this.parseJsxNode();
+      return { kind: 'jsx', value: '', operator: '', path: [], items: [], properties: [], callee: '', args: [],
+        jsxNode: jsx, line: current.line, column: current.column };
+    }
+    if (this.checkValue('(') && this.peek(1).kind === 'identifier' && this.peek(2).value === ')' && this.peek(3).value === '=>') {
+      this.index++; let parameter = this.current().value; this.index++; this.expectValue(')', 'RL1001'); this.expectValue('=>', 'RL1001');
+      let body = this.parseExpression();
+      return { kind: 'lambda', value: '', operator: '=>', path: [], items: [], properties: [], callee: '', args: [],
+        parameter: parameter, body: body, line: current.line, column: current.column };
+    }
     if (this.checkValue('(')) { this.index++; let value = this.parseExpression(); this.expectValue(')', 'RL1001'); return value; }
     if (current.kind === 'identifier') {
+      if (this.peek(1).value === '=>') {
+        this.index++; this.expectValue('=>', 'RL1001');
+        let body = this.parseExpression();
+        return { kind: 'lambda', value: '', operator: '=>', path: [], items: [], properties: [], callee: '', args: [],
+          parameter: current.value, body: body, line: current.line, column: current.column };
+      }
       this.index++; let parts: string[] = [current.value];
       while (this.checkValue('.')) { this.index++; parts.push(this.current().value); this.expectKind('identifier', 'RL1007'); }
       if (this.checkValue('(')) {
         this.index++; let args: ReactLiteExpression[] = [];
+        if (parts.length > 1 && parts[parts.length - 1] === 'map' && this.checkKind('identifier') && this.peek(1).value === '=>') {
+          let parameter = this.current().value; this.index++; this.expectValue('=>', 'RL1001');
+          let body = this.parseExpression();
+          this.expectValue(')', 'RL1001');
+          return { kind: 'map', value: '', operator: '', path: parts.slice(0, parts.length - 1), items: [], properties: [], callee: parts.join('.'), args: [],
+            parameter: parameter, body: body, template: body.kind === 'jsx' ? body.jsxNode : undefined,
+            source: pathExpression(parts.slice(0, parts.length - 1), current), line: current.line, column: current.column };
+        }
         while (!this.checkValue(')') && !this.checkKind('eof')) { args.push(this.parseExpression()); if (this.checkValue(',')) { this.index++; } else { break; } }
         this.expectValue(')', 'RL1001'); return { kind: 'call', value: '', operator: '', path: parts, items: [], properties: [], callee: parts.join('.'), args: args, line: current.line, column: current.column };
       }
@@ -185,5 +211,11 @@ function nodeFor(component: string, attributes: ReactLiteAstAttribute[], childre
 function textNode(token: ReactLiteToken): ReactLiteAstNode {
   return { kind: 'text', component: 'Text', attributes: [{ name: 'text', stringValue: token.value.trim(), booleanValue: false, line: token.line, column: token.column }], children: [], line: token.line, column: token.column };
 }
+function expressionNode(expression: ReactLiteExpression, token: ReactLiteToken): ReactLiteAstNode {
+  return { kind: 'expression', component: '', attributes: [], children: [], expression: expression, line: token.line, column: token.column };
+}
 function literalString(value: string): ReactLiteExpression { return { kind: 'literal', value: value, operator: '', path: [], items: [], properties: [], callee: '', args: [], line: 0, column: 0 }; }
 function literalObject(properties: ReactLiteExpressionProperty[]): ReactLiteExpression { return { kind: 'object', value: 'state', operator: '', path: [], items: [], properties: properties, callee: '', args: [], line: 0, column: 0 }; }
+function pathExpression(path: string[], token: ReactLiteToken): ReactLiteExpression {
+  return { kind: 'path', value: '', operator: '', path: path, items: [], properties: [], callee: '', args: [], line: token.line, column: token.column };
+}

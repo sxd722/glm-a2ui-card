@@ -9,7 +9,7 @@ export struct UiIrRenderer {
   @Prop node: UiIrNode;
   @Prop session: UiIrSessionState;
   @Prop scope: UiEvaluationScope = { aliases: {}, event: {} };
-  onAction: (action: UiAction) => void = (_action: UiAction): void => {};
+  onAction: (action: UiAction, scope?: UiEvaluationScope) => void = (_action: UiAction, _scope?: UiEvaluationScope): void => {};
   onValueChange: (path: string, value: UiValue) => void = (_path: string, _value: UiValue): void => {};
   onDiagnostic: (message: string) => void = (_message: string): void => {};
   private reportedDiagnostics: string[] = [];
@@ -68,22 +68,22 @@ export struct UiIrRenderer {
       if (this.node.component === 'TextInput') {
         TextInput({ text: this.boundText(), placeholder: this.propText('placeholder') }).width('100%').height(46).padding(12)
             .fontColor(this.style().foregroundColor).backgroundColor(this.style().backgroundColor).borderRadius(this.style().borderRadius)
-          .onChange((value: string) => { this.onValueChange(this.node.binding, stringValue(value)); })
+          .onChange((value: string) => { let nextValue = stringValue(value); this.onValueChange(this.node.binding, nextValue); this.invokeAction('change', this.changeEvent(nextValue)); })
           .onSubmit(() => { this.invokeAction('submit'); });
       } else {
         TextArea({ text: this.boundText(), placeholder: this.propText('placeholder') }).width('100%').height(110).padding(12)
           .fontColor(this.style().foregroundColor).backgroundColor(this.style().backgroundColor).borderRadius(this.style().borderRadius)
-          .onChange((value: string) => { this.onValueChange(this.node.binding, stringValue(value)); })
+          .onChange((value: string) => { let nextValue = stringValue(value); this.onValueChange(this.node.binding, nextValue); this.invokeAction('change', this.changeEvent(nextValue)); })
           .onSubmit(() => { this.invokeAction('submit'); });
       }
     } else if (this.node.component === 'Toggle' || this.node.component === 'Checkbox') {
       Row({ space: 10 }) {
-        if (this.node.component === 'Toggle') { Toggle({ type: ToggleType.Switch, isOn: this.boundBoolean() }).onChange((value: boolean) => { this.onValueChange(this.node.binding, booleanValue(value)); this.invokeAction('select'); }); }
-        else { Checkbox({ name: this.node.id, group: 'ui-ir' }).select(this.boundBoolean()).onChange((value: boolean) => { this.onValueChange(this.node.binding, booleanValue(value)); this.invokeAction('select'); }); }
+        if (this.node.component === 'Toggle') { Toggle({ type: ToggleType.Switch, isOn: this.boundBoolean() }).onChange((value: boolean) => { let nextValue = booleanValue(value); this.onValueChange(this.node.binding, nextValue); this.invokeAction('change', this.changeEvent(nextValue)); }); }
+        else { Checkbox({ name: this.node.id, group: 'ui-ir' }).select(this.boundBoolean()).onChange((value: boolean) => { let nextValue = booleanValue(value); this.onValueChange(this.node.binding, nextValue); this.invokeAction('change', this.changeEvent(nextValue)); }); }
         Text(this.propText('label')).fontSize(this.style().fontSize).fontColor(this.style().foregroundColor);
       }.width('100%').alignItems(VerticalAlign.Center);
     } else if (this.node.component === 'ChoiceChips' || this.node.component === 'SegmentedControl' || this.node.component === 'Tabs') {
-      Scroll() { Row({ space: 8 }) { ForEach(this.choiceItems(), (item: string) => { Button(item).height(36).padding({ left: 12, right: 12 }).backgroundColor(item === this.boundText() ? this.style().foregroundColor : this.style().backgroundColor).fontColor(item === this.boundText() ? this.style().backgroundColor : this.style().foregroundColor).borderRadius(this.style().borderRadius).onClick(() => { this.onValueChange(this.node.binding, this.choiceValue(item)); this.invokeAction('select'); }); }, (item: string) => item); }.width('max-content'); }
+      Scroll() { Row({ space: 8 }) { ForEach(this.choiceItems(), (item: string) => { Button(item).height(36).padding({ left: 12, right: 12 }).backgroundColor(item === this.boundText() ? this.style().foregroundColor : this.style().backgroundColor).fontColor(item === this.boundText() ? this.style().backgroundColor : this.style().foregroundColor).borderRadius(this.style().borderRadius).onClick(() => { let selected = this.choiceValue(item); this.onValueChange(this.node.binding, selected); this.invokeAction('change', this.changeEvent(selected)); }); }, (item: string) => item); }.width('max-content'); }
         .width('100%').height(48).scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off);
     } else if (this.node.component === 'Sheet') {
       Stack({ alignContent: Alignment.Bottom }) {
@@ -171,7 +171,10 @@ export struct UiIrRenderer {
     if (action === undefined) { action = this.node.actions['submit']; }
     if (action !== undefined) { this.onAction(action); }
   }
-  private invokeAction(name: string): void { let action = this.node.actions[name]; if (action !== undefined) { this.onAction(action); } }
+  private invokeAction(name: string, event: Record<string, UiValue> = {}): void {
+    let action = this.node.actions[name]; if (action !== undefined) { let nextScope: UiEvaluationScope = { aliases: this.scope.aliases, event: event }; this.onAction(action, nextScope); }
+  }
+  private changeEvent(value: UiValue): Record<string, UiValue> { let event: Record<string, UiValue> = {}; event['value'] = value; return event; }
   private horizontalAlign(style: ResolvedArkUiStyle): HorizontalAlign { return style.align === 'center' ? HorizontalAlign.Center : style.align === 'end' ? HorizontalAlign.End : HorizontalAlign.Start; }
   private verticalAlign(style: ResolvedArkUiStyle): VerticalAlign { return style.align === 'center' ? VerticalAlign.Center : style.align === 'end' ? VerticalAlign.Bottom : VerticalAlign.Center; }
   private flexAlign(style: ResolvedArkUiStyle): FlexAlign { return style.justify === 'center' ? FlexAlign.Center : style.justify === 'between' ? FlexAlign.SpaceBetween : style.justify === 'end' ? FlexAlign.End : FlexAlign.Start; }

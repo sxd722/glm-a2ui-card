@@ -28,9 +28,9 @@ import {
   buildRuntimeAgentTurnRequest,
   normalizeRuntimeAgentTurnResult
 } from '../services/NestedAgentRuntime';
-import { UiAction, UiIrSessionState, UiIrSpec, UiValue } from '../services/UiIrTypes';
+import { UiAction, UiEvaluationScope, UiIrSessionState, UiIrSpec, UiValue } from '../services/UiIrTypes';
 import { addUiIrAsset, activeUiIrPage, createUiIrSession, reduceUiAction, updateUiBinding } from '../services/UiIrRuntime';
-import { uiValueFromObject, uiValueToDisplayString } from '../services/UiValue';
+import { stringValue as uiStringValue, uiValueFromObject, uiValueToDisplayString } from '../services/UiValue';
 import {
   readInstalledNestedAppById,
   readRunnerSession,
@@ -178,7 +178,7 @@ struct AppRunner {
           UiIrRenderer({
             node: activeUiIrPage(this.uiIrSession).root,
             session: this.uiIrSession,
-            onAction: (action: UiAction): void => { this.runUiIrAction(action); },
+            onAction: (action: UiAction, scope?: UiEvaluationScope): void => { this.runUiIrAction(action, scope); },
             onValueChange: (key: string, value: UiValue): void => {
               this.uiIrSession = updateUiBinding(this.uiIrSession, key, value);
               this.persistRunnerState();
@@ -193,7 +193,7 @@ struct AppRunner {
         UiIrRenderer({
           node: activeUiIrPage(this.uiIrSession).root,
           session: this.uiIrSession,
-          onAction: (action: UiAction): void => { this.runUiIrAction(action); },
+          onAction: (action: UiAction, scope?: UiEvaluationScope): void => { this.runUiIrAction(action, scope); },
           onValueChange: (key: string, value: UiValue): void => {
             this.uiIrSession = updateUiBinding(this.uiIrSession, key, value);
             this.persistRunnerState();
@@ -293,8 +293,8 @@ struct AppRunner {
     }
   }
 
-  private async runUiIrAction(action: UiAction): Promise<void> {
-    let reduced = reduceUiAction(this.uiIrSession, action);
+  private async runUiIrAction(action: UiAction, scope: UiEvaluationScope = { aliases: {}, event: {} }): Promise<void> {
+    let reduced = reduceUiAction(this.uiIrSession, action, scope);
     this.uiIrSession = reduced.session;
     if (reduced.effect === undefined) {
       this.statusText = '本地交互已完成，不调用 GLM。';
@@ -344,16 +344,25 @@ struct AppRunner {
       };
       let raw: string = await requestNestedRuntimeTurnFromGlm(request, { baseUrl: GLM_CODING_ENDPOINT, apiKey: GLM_LOCAL_API_KEY, model: GLM_DEFAULT_MODEL });
       let result: RuntimeAgentTurnResult = normalizeRuntimeAgentTurnResult(raw);
+      let bindingKeys: string[] = Object.keys(action.resultBindings);
+      let rejectedPatch: boolean = false;
       for (let i: number = 0; i < result.statePatches.length; i++) {
-        this.uiIrSession = updateUiBinding(this.uiIrSession, result.statePatches[i].key, uiValueFromObject(result.statePatches[i].value));
+        let target: string | undefined = action.resultBindings[result.statePatches[i].key];
+        if (target !== undefined) { this.uiIrSession = updateUiBinding(this.uiIrSession, target, uiValueFromObject(result.statePatches[i].value)); }
+        else { rejectedPatch = true; }
       }
-      if (result.navigationPageId.length > 0) {
-        this.uiIrSession.activePageId = result.navigationPageId;
-        this.uiIrSession.routeStack.push(result.navigationPageId);
+      if (rejectedPatch || (bindingKeys.length === 0 && result.statePatches.length > 0)) {
+        this.uiIrSession.status = 'error';
+        this.uiIrSession.errorMessage = 'Agent 返回了未声明的字段，已拒绝写入。';
+      } else {
+        if (action.statusPath !== undefined && action.statusPath.length > 0) {
+          this.uiIrSession = updateUiBinding(this.uiIrSession, action.statusPath, uiStringValue(result.status === 'complete' ? 'complete' : 'error'));
+        }
+        this.uiIrSession.status = result.status;
+        this.uiIrSession.agentTrace = result.assistantText;
+        this.uiIrSession.errorMessage = result.errorMessage;
+        await this.runUiIrLocalSteps(result.status === 'complete' ? action.successSteps : action.errorSteps);
       }
-      this.uiIrSession.status = result.status;
-      this.uiIrSession.agentTrace = result.assistantText;
-      this.uiIrSession.errorMessage = result.errorMessage;
       this.statusText = result.status === 'error' ? 'Agent Turn 失败，但已保留 UI。' : 'Agent Turn 已完成。';
     } catch (error) {
       this.uiIrSession.status = 'error';
@@ -361,6 +370,15 @@ struct AppRunner {
       this.statusText = 'Agent 失败，但已保留当前 UI。';
     }
     await this.persistRunnerState();
+  }
+
+  private async runUiIrLocalSteps(steps: UiAction[] | undefined): Promise<void> {
+    if (steps === undefined) { return; }
+    for (let i: number = 0; i < steps.length; i++) {
+      let reduced = reduceUiAction(this.uiIrSession, steps[i]);
+      this.uiIrSession = reduced.session;
+      if (reduced.effect !== undefined) { this.uiIrSession.errorMessage = 'Agent success/error steps 只能包含本地 Action。'; }
+    }
   }
 
   private async runNestedAction(current: ArkUiAction): Promise<void> {

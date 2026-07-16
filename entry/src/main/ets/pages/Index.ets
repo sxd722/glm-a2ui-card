@@ -73,7 +73,7 @@ import {
 } from '../services/SkillAppMvp';
 import { AppBlueprint, AppBlueprintParseResult, ForgeDraft, RuntimeAgentTurnRequest, RuntimeAgentTurnResult, SkillSource, ToolContract } from '../services/SkillAppTypes';
 import { forgeReactLite } from '../services/ReactLiteForgeService';
-import { compileTravelReactLite, TRAVEL_REACT_LITE_SOURCE } from '../services/ReactLiteExamples';
+import { compileReactLiteMapSmoke, compileTodoReactLite, compileTravelReactLite, TRAVEL_REACT_LITE_SOURCE } from '../services/ReactLiteExamples';
 import { ReactLiteCompileResult, compileReactLite } from '../services/ReactLiteCompiler';
 import { UiIrSpec } from '../services/UiIrTypes';
 import { applyRuntimeAgentTurn, buildRuntimeAgentTurnRequest, normalizeRuntimeAgentTurnResult } from '../services/NestedAgentRuntime';
@@ -2170,9 +2170,16 @@ struct Index {
 
   private runReactLiteSelfTestFromDebug(): void {
     let result: ReactLiteCompileResult = compileTravelReactLite(this.forgeDraft.manifest, this.forgeDraft.blueprint);
-    this.statusText = result.ok ? '[HDC] React Lite self-test passed' : '[HDC] React Lite self-test failed';
-    this.forgeReactLiteDiagnostics = result.ok ? 'fixture compile passed' : JSON.stringify(result.diagnostics);
-    if (!result.ok) { throw new Error(this.forgeReactLiteDiagnostics); }
+    let todo = compileTodoReactLite(this.forgeDraft.manifest, this.forgeDraft.blueprint);
+    let mapSmoke = compileReactLiteMapSmoke(this.forgeDraft.manifest, this.forgeDraft.blueprint);
+    let todoCount: number = todo.ok && todo.value !== undefined && todo.value.initialState['tasks'] !== undefined &&
+      todo.value.initialState['tasks'].kind === 'array' ? todo.value.initialState['tasks'].arrayValue.length : 0;
+    let passed: boolean = result.ok && todo.ok && mapSmoke.ok && todoCount === 5;
+    this.statusText = passed ? '[HDC] React Lite travel/todo/map self-test passed' : '[HDC] React Lite self-test failed';
+    this.forgeReactLiteDiagnostics = passed ? 'travel compile passed; todo compile passed; map compile passed; initial tasks=5' :
+      JSON.stringify({ travel: result.diagnostics, todo: todo.diagnostics, todoUi: todo.uiDiagnostics,
+        map: mapSmoke.diagnostics, mapUi: mapSmoke.uiDiagnostics, todoCount: todoCount });
+    if (!passed) { throw new Error(this.forgeReactLiteDiagnostics); }
   }
 
   private resetWorkbenchFromDebug(): void {

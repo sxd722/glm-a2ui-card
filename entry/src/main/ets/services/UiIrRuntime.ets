@@ -88,12 +88,41 @@ function applyAction(session: UiIrSessionState, action: UiAction, scope: UiEvalu
   if (action.kind === 'list.append') { let list = getPath(session.state, action.path); if (list === undefined || list.kind !== 'array') { session.errorMessage = '目标不是列表。'; return undefined; } list.arrayValue.push(evaluateUiExpression(action.value, session, scope)); return undefined; }
   if (action.kind === 'list.appendWithId') { applyAppendWithId(session, action, scope); return undefined; }
   if (action.kind === 'list.updateWhere' || action.kind === 'list.removeWhere' || action.kind === 'list.toggleWhere') { return applyListAction(session, action, scope); }
-  if (action.kind === 'navigation.push') { if (pageExists(session.app, action.targetPageId)) { session.routeStack.push(action.targetPageId); session.activePageId = action.targetPageId; } else { session.errorMessage = '导航目标不存在。'; } return undefined; }
+  if (action.kind === 'navigation.push') {
+    if (!pageExists(session.app, action.targetPageId)) { session.errorMessage = '导航目标不存在。'; return undefined; }
+    if (session.activePageId !== action.targetPageId) { session.routeStack.push(action.targetPageId); session.activePageId = action.targetPageId; }
+    return undefined;
+  }
   if (action.kind === 'navigation.back') { if (session.routeStack.length > 1) { session.routeStack.pop(); session.activePageId = session.routeStack[session.routeStack.length - 1]; } return undefined; }
+  if (action.kind === 'navigation.popTo') {
+    if (!pageExists(session.app, action.targetPageId)) { session.errorMessage = '导航目标不存在。'; return undefined; }
+    let targetIndex: number = session.routeStack.lastIndexOf(action.targetPageId);
+    if (targetIndex < 0) { session.routeStack = [session.app.initialPageId, action.targetPageId]; }
+    else { session.routeStack = session.routeStack.slice(0, targetIndex + 1); }
+    session.activePageId = action.targetPageId; return undefined;
+  }
+  if (action.kind === 'navigation.replace') {
+    if (!pageExists(session.app, action.targetPageId)) { session.errorMessage = '导航目标不存在。'; return undefined; }
+    if (session.routeStack.length === 0) { session.routeStack = [action.targetPageId]; }
+    else { session.routeStack[session.routeStack.length - 1] = action.targetPageId; }
+    session.activePageId = action.targetPageId; return undefined;
+  }
   if (action.kind === 'app.reset') { let reset = resetUiIrSession(session); session.activePageId = reset.activePageId; session.routeStack = reset.routeStack; session.state = reset.state; session.assets = reset.assets; return undefined; }
   if (action.kind === 'asset.pickLocalImage') { return { kind: 'asset.pickLocalImage', action: action, args: stringValue(action.assetSlotId) }; }
   if (action.kind === 'tool.invoke') { return { kind: 'tool.invoke', action: action, args: evaluateUiExpression(action.toolArgs, session, scope) }; }
-  if (action.kind === 'agent.invoke') { return { kind: 'agent.invoke', action: action, args: evaluateUiExpression(action.toolArgs, session, scope) }; }
+  if (action.kind === 'agent.invoke') {
+    if (action.statusPath !== undefined && action.statusPath.length > 0) { setPath(session.state, action.statusPath, stringValue('pending')); }
+    session.status = 'pending';
+    return { kind: 'agent.invoke', action: action, args: evaluateUiExpression(action.toolArgs, session, scope) };
+  }
+  if (action.kind === 'action.transaction') {
+    for (let i: number = 0; i < action.steps.length; i++) {
+      let nested = applyAction(session, action.steps[i], scope);
+      if (nested !== undefined) { session.errorMessage = 'transaction 不允许外部 Effect。'; return undefined; }
+      if (session.errorMessage.length > 0) { return undefined; }
+    }
+    return undefined;
+  }
   return undefined;
 }
 

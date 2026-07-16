@@ -10,7 +10,7 @@ export interface UiValue {
 }
 
 export type UiExpressionKind = 'literal' | 'path' | 'unary' | 'binary' | 'conditional' |
-  'array' | 'object' | 'intrinsicCall';
+  'array' | 'object' | 'intrinsicCall' | 'lambda' | 'jsx' | 'map';
 
 export interface UiExpressionProperty {
   key: string;
@@ -43,8 +43,8 @@ export type UiComponentType = 'SafeArea' | 'Scroll' | 'Column' | 'Row' | 'Stack'
 
 export type UiActionKind = 'state.set' | 'state.toggle' | 'state.increment' | 'list.append' |
   'list.appendWithId' | 'list.updateWhere' | 'list.removeWhere' | 'list.toggleWhere' | 'navigation.push' |
-  'navigation.back' | 'app.reset' | 'asset.pickLocalImage' | 'tool.invoke' |
-  'agent.invoke' | 'action.sequence';
+  'navigation.back' | 'navigation.popTo' | 'navigation.replace' | 'app.reset' | 'asset.pickLocalImage' | 'tool.invoke' |
+  'agent.invoke' | 'action.sequence' | 'action.transaction';
 
 export interface UiAction {
   id: string;
@@ -61,6 +61,9 @@ export interface UiAction {
   toolArgs: UiExpression;
   resultBindings: Record<string, string>;
   intent: string;
+  statusPath?: string;
+  successSteps?: UiAction[];
+  errorSteps?: UiAction[];
   assetSlotId: string;
   steps: UiAction[];
 }

@@ -16,6 +16,7 @@ class ReactLiteScanner {
   private column: number = 1;
   private inJsxText: boolean = false;
   private jsxDepth: number = 0;
+  private jsxExpressionDepth: number = 0;
   private currentTagClosing: boolean = false;
   private tokens: ReactLiteToken[] = [];
   private diagnostics: ReactLiteDiagnostic[] = [];
@@ -25,7 +26,7 @@ class ReactLiteScanner {
   scan(): ReactLiteTokenResult {
     while (this.index < this.input.length) {
       let ch: string = this.input.charAt(this.index);
-      if (this.inJsxText && ch !== '<') {
+      if (this.inJsxText && ch !== '<' && ch !== '{') {
         this.scanJsxText();
         continue;
       }
@@ -53,6 +54,17 @@ class ReactLiteScanner {
         this.inJsxText = this.jsxDepth > 0;
         continue;
       }
+      if (ch === '{') {
+        this.tokens.push(this.single('punctuation', '{')); this.advance(ch);
+        if (this.inJsxText) { this.jsxExpressionDepth = 1; this.inJsxText = false; }
+        else if (this.jsxExpressionDepth > 0) { this.jsxExpressionDepth++; }
+        continue;
+      }
+      if (ch === '}') {
+        this.tokens.push(this.single('punctuation', '}')); this.advance(ch);
+        if (this.jsxExpressionDepth > 0) { this.jsxExpressionDepth--; this.inJsxText = this.jsxExpressionDepth === 0 && this.jsxDepth > 0; }
+        continue;
+      }
       if (this.scanPunctuation(ch)) { continue; }
       if (this.scanOperator(ch)) { continue; }
       if (ch === '"' || ch === "'") { this.scanString(ch); continue; }
@@ -67,7 +79,7 @@ class ReactLiteScanner {
 
   private scanJsxText(): void {
     let start: number = this.index; let startLine: number = this.line; let startColumn: number = this.column;
-    while (this.index < this.input.length && this.input.charAt(this.index) !== '<') { this.advance(this.input.charAt(this.index)); }
+    while (this.index < this.input.length && this.input.charAt(this.index) !== '<' && this.input.charAt(this.index) !== '{') { this.advance(this.input.charAt(this.index)); }
     let value: string = this.input.substring(start, this.index);
     if (value.trim().length > 0) { this.tokens.push(this.makeToken('jsxText', value, start, startLine, startColumn)); }
   }
@@ -89,7 +101,7 @@ class ReactLiteScanner {
   }
 
   private scanPunctuation(ch: string): boolean {
-    if ('{}()[],=:.;'.indexOf(ch) < 0) { return false; }
+    if ('()[],=:.;'.indexOf(ch) < 0) { return false; }
     this.tokens.push(this.single('punctuation', ch)); this.advance(ch); return true;
   }
 

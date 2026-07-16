@@ -10,7 +10,7 @@ export interface ReactLiteToken {
 }
 
 export type ReactLiteExpressionKind = 'literal' | 'path' | 'unary' | 'binary' | 'conditional' |
-  'array' | 'object' | 'call';
+  'array' | 'object' | 'call' | 'lambda' | 'jsx' | 'map';
 
 export interface ReactLiteExpressionProperty {
   key: string;
@@ -31,11 +31,17 @@ export interface ReactLiteExpression {
   properties: ReactLiteExpressionProperty[];
   callee: string;
   args: ReactLiteExpression[];
+  parameter?: string;
+  body?: ReactLiteExpression;
+  jsxNode?: ReactLiteAstNode;
+  source?: ReactLiteExpression;
+  template?: ReactLiteAstNode;
+  keyPath?: string;
   line: number;
   column: number;
 }
 
-export type ReactLiteAstNodeKind = 'element' | 'if' | 'forEach' | 'text';
+export type ReactLiteAstNodeKind = 'element' | 'if' | 'forEach' | 'text' | 'expression';
 
 export interface ReactLiteAstAttribute {
   name: string;
@@ -51,6 +57,7 @@ export interface ReactLiteAstNode {
   component: string;
   attributes: ReactLiteAstAttribute[];
   children: ReactLiteAstNode[];
+  expression?: ReactLiteExpression;
   line: number;
   column: number;
 }

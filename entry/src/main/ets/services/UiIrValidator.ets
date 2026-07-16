@@ -6,8 +6,8 @@ const COMPONENTS: UiComponentType[] = ['SafeArea', 'Scroll', 'Column', 'Row', 'S
   'TextArea', 'Toggle', 'Checkbox', 'ChoiceChips', 'SegmentedControl', 'Hero', 'Section', 'InfoCard', 'FormGroup',
   'MetricGrid', 'Timeline', 'ResultList', 'MediaGallery', 'StatusBanner', 'Tabs', 'ActionBar', 'EmptyState', 'Sheet'];
 const ACTIONS: string[] = ['state.set', 'state.toggle', 'state.increment', 'list.append', 'list.appendWithId', 'list.updateWhere', 'list.removeWhere',
-  'list.toggleWhere', 'navigation.push', 'navigation.back', 'app.reset',
-  'asset.pickLocalImage', 'tool.invoke', 'agent.invoke', 'action.sequence'];
+  'list.toggleWhere', 'navigation.push', 'navigation.back', 'navigation.popTo', 'navigation.replace', 'app.reset',
+  'asset.pickLocalImage', 'tool.invoke', 'agent.invoke', 'action.sequence', 'action.transaction'];
 const MAX_NODES: number = 320;
 const MAX_EXPRESSION_DEPTH: number = 16;
 const MAX_STATE_DEPTH: number = 8;
@@ -96,7 +96,7 @@ function validateNode(node: UiIrNode, depth: number, forEachDepth: number, pageI
 function validateAction(action: UiAction, pageIds: string[], state: Record<string, UiValue>, diagnostics: UiIrDiagnostic[], toolNames: string[], budget: ValidationBudget): void {
   budget.actions++;
   if (ACTIONS.indexOf(action.kind) < 0) { diagnostics.push(error('UI1020', '未知 Action：' + action.kind, action.id, 'kind')); }
-  if (action.kind === 'navigation.push' && pageIds.indexOf(action.targetPageId) < 0) {
+  if (['navigation.push', 'navigation.popTo', 'navigation.replace'].indexOf(action.kind) >= 0 && pageIds.indexOf(action.targetPageId) < 0) {
     diagnostics.push(error('UI1021', '导航目标不存在', action.id, 'targetPageId'));
   }
   if (action.kind === 'tool.invoke' && toolNames.indexOf(action.toolName) < 0) {
@@ -110,6 +110,8 @@ function validateAction(action: UiAction, pageIds: string[], state: Record<strin
   validateExpression(action.value, 0, diagnostics, action.id);
   validateExpression(action.toolArgs, 0, diagnostics, action.id);
   if (action.kind === 'action.sequence') { validateSequence(action, diagnostics); }
+  if (action.kind === 'action.transaction') { validateTransaction(action, diagnostics); }
+  if (action.kind === 'agent.invoke') { validateAgentAction(action, state, diagnostics); }
   if ((action.kind === 'list.appendWithId' || action.kind === 'list.updateWhere') &&
     (action.value === undefined || action.value.kind !== 'object')) {
     diagnostics.push(error('UI1046', action.kind === 'list.appendWithId' ? 'appendWithId 需要对象值' : 'updateWhere 需要对象 patch', action.id, 'value'));
@@ -228,6 +230,28 @@ function validateSequence(action: UiAction, diagnostics: UiIrDiagnostic[]): void
     }
   }
   if (effectCount > 1) { diagnostics.push(error('UI1042', 'sequence 最多包含一个外部 Effect', action.id, 'steps')); }
+}
+
+function validateTransaction(action: UiAction, diagnostics: UiIrDiagnostic[]): void {
+  for (let i: number = 0; i < action.steps.length; i++) {
+    if (isExternalEffect(action.steps[i])) {
+      diagnostics.push(error('UI1048', 'transaction 只允许本地 Action，外部 Effect 请使用 sequence 并置于末尾', action.id, 'steps'));
+    }
+  }
+}
+
+function validateAgentAction(action: UiAction, state: Record<string, UiValue>, diagnostics: UiIrDiagnostic[]): void {
+  if (action.intent.length === 0) { diagnostics.push(error('UI1049', 'Agent intent 不能为空', action.id, 'intent')); }
+  if (action.toolArgs.kind !== 'object') { diagnostics.push(error('UI1050', 'Agent args 必须是 object', action.id, 'toolArgs')); }
+  if (action.statusPath !== undefined && action.statusPath.length > 0 && !bindingRootExists(action.statusPath, state, [])) {
+    diagnostics.push(error('UI1051', 'Agent status 路径不存在：' + action.statusPath, action.id, 'status'));
+  }
+  let keys: string[] = Object.keys(action.resultBindings);
+  for (let i: number = 0; i < keys.length; i++) {
+    if (!safePath(action.resultBindings[keys[i]]) || !bindingRootExists(action.resultBindings[keys[i]], state, [])) {
+      diagnostics.push(error('UI1052', 'Agent bind 目标不存在：' + action.resultBindings[keys[i]], action.id, 'bind'));
+    }
+  }
 }
 
 function isExternalEffect(action: UiAction): boolean {

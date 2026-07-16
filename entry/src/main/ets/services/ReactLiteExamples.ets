@@ -61,3 +61,36 @@ export function compileTravelReactLite(manifest: SkillManifest, blueprint: AppBl
   let context: ReactLiteCompileContext = { manifest: manifest, blueprint: blueprint, localAssetIds: ['gallery', 'travelHero'] };
   return compileReactLite(TRAVEL_REACT_LITE_SOURCE, context);
 }
+
+export const TODO_REACT_LITE_SOURCE: string = [
+  'export default function App() {',
+  '  const state = useState({ draftTitle: "", draftPriority: "normal", draftDue: "", suggestionNote: "", agentStatus: "idle", adding: false, tasks: [{ id: "task-1", title: "整理收件箱", priority: "high", done: false }, { id: "task-2", title: "回复客户邮件", priority: "normal", done: false }, { id: "task-3", title: "准备周会材料", priority: "normal", done: true }, { id: "task-4", title: "提交报销单", priority: "low", done: false }, { id: "task-5", title: "规划下周任务", priority: "low", done: false }] });',
+  '  const completed = useComputed(countWhere(state.tasks, "done", true));',
+  '  return (<AppShell id="todo-app" title="今日待办" subtitle="一个受限 React Lite Todo Nested App" initialPage="today-list">',
+  '    <Page id="today-list" title="今日待办" scroll>',
+  '      <Column className="w-full gap-4 p-4 bg-surface">',
+  '        <Row className="w-full items-center justify-between"><Column><Text text="今日待办" className="text-2xl font-bold text-ink" /><Text text={formatNumber(computed.completed)} className="text-xs text-muted" /></Column><Button text="新增" className="bg-primary text-white rounded-xl" onPress={setState("adding", true)} /></Row>',
+  '        <ForEach items={state.tasks} item="task" keyBy="id"><Card className="w-full gap-2 p-4 bg-card rounded-xl"><Row className="w-full items-center justify-between"><Column><Text text={task.title} className="text-lg font-bold text-ink" /><Text text={task.priority} className="text-xs text-muted" /><Text text={task.done} className="text-xs text-muted" /></Column></Row><Button text="切换完成" className="bg-secondary text-white rounded-full" onPress={toggleWhere("tasks", "id", task.id, "done")} /><Button text="编辑标题" className="bg-card text-ink rounded-full" onPress={updateWhere("tasks", "id", task.id, { title: state.draftTitle })} /></Card></ForEach>',
+  '        <If when={length(state.tasks) === 0}><EmptyState><Text text="暂无任务" className="text-lg font-bold text-ink" /></EmptyState></If>',
+  '        <If when={state.adding}><Sheet className="w-full p-4 bg-card rounded-2xl shadow-lg" onDismiss={setState("adding", false)}><Text text="新增任务" className="text-xl font-bold text-ink" /><TextInput bind="draftTitle" placeholder="任务名称" onChange={(value) => setState("draftTitle", value)} /><Button text="生成建议" className="w-full bg-primary text-white rounded-xl" onPress={invokeAgent({ intent: "suggestTaskDetails", args: { title: state.draftTitle }, bind: { priority: "draftPriority", due: "draftDue", note: "suggestionNote" }, status: "agentStatus" })} /><Button text="保存任务" className="w-full bg-primary text-white rounded-xl" onPress={sequence(appendWithId("tasks", "task", { title: state.draftTitle, priority: state.draftPriority, due: state.draftDue, note: state.suggestionNote, done: false }), setState("adding", false))} /><Button text="取消" className="w-full bg-card text-ink rounded-xl" onPress={setState("adding", false)} /></Sheet></If>',
+  '        <ActionBar className="w-full p-3 bg-primary rounded-xl"><Button text="快速新增" className="bg-primary text-white rounded-xl" onPress={setState("adding", true)} /><Button text="回到今日" className="bg-primary text-white rounded-xl" onPress={popTo("today-list")} /></ActionBar>',
+  '      </Column>',
+  '    </Page>',
+  '  </AppShell>);',
+  '}'
+].join('\n');
+
+export function compileTodoReactLite(manifest: SkillManifest, blueprint: AppBlueprint): ReactLiteCompileResult {
+  return compileReactLite(TODO_REACT_LITE_SOURCE, { manifest: manifest, blueprint: blueprint, localAssetIds: [] });
+}
+
+export const REACT_LITE_MAP_SMOKE_SOURCE: string = [
+  'export default function App() {',
+  '  const state = useState({ tasks: [{ id: "map-1", title: "Map item" }] });',
+  '  return (<AppShell id="map-smoke" title="Map" initialPage="home"><Page id="home" title="Map"><Column>{state.tasks.map(task => (<Card key={task.id}><Text text={task.title} /></Card>))}</Column></Page></AppShell>);',
+  '}'
+].join('\n');
+
+export function compileReactLiteMapSmoke(manifest: SkillManifest, blueprint: AppBlueprint): ReactLiteCompileResult {
+  return compileReactLite(REACT_LITE_MAP_SMOKE_SOURCE, { manifest: manifest, blueprint: blueprint, localAssetIds: [] });
+}
