@@ -83,7 +83,7 @@ export struct UiIrRenderer {
         Text(this.propText('label')).fontSize(this.style().fontSize).fontColor(this.style().foregroundColor);
       }.width('100%').alignItems(VerticalAlign.Center);
     } else if (this.node.component === 'ChoiceChips' || this.node.component === 'SegmentedControl' || this.node.component === 'Tabs') {
-      Scroll() { Row({ space: 8 }) { ForEach(this.choiceItems(), (item: string) => { Button(item).height(36).padding({ left: 12, right: 12 }).backgroundColor(item === this.boundText() ? this.style().foregroundColor : this.style().backgroundColor).fontColor(item === this.boundText() ? this.style().backgroundColor : this.style().foregroundColor).borderRadius(this.style().borderRadius).onClick(() => { let selected = this.choiceValue(item); this.onValueChange(this.node.binding, selected); this.invokeAction('change', this.changeEvent(selected)); }); }, (item: string) => item); }.width('max-content'); }
+      Scroll() { Row({ space: 8 }) { ForEach(this.choiceItems(), (item: string) => { Button(item).height(36).padding({ left: 12, right: 12 }).backgroundColor(item === this.boundText() ? this.style().foregroundColor : this.style().backgroundColor).fontColor(item === this.boundText() ? this.style().backgroundColor : this.style().foregroundColor).borderRadius(this.style().borderRadius).onClick(() => { let selected = this.choiceValue(item); this.onValueChange(this.node.binding, selected); this.invokeAction('change', this.changeEvent(selected)); }); }, (item: string) => this.choiceRenderKey(item)); }.width('max-content'); }
         .width('100%').height(48).scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off);
     } else if (this.node.component === 'Sheet') {
       Stack({ alignContent: Alignment.Bottom }) {
@@ -148,10 +148,19 @@ export struct UiIrRenderer {
       for (let i: number = 0; i < index; i++) {
         if (this.rawRepeatKey(items[i]) === key) { this.reportDiagnostic('重复 ForEach key：' + key); return 'index-' + index.toString(); }
       }
-      return key;
+      return key + '-' + this.hashUiValue(item);
     }
     this.reportDiagnostic('ForEach 缺少有效 key：' + this.node.keyPath);
     return 'index-' + index.toString();
+  }
+  private choiceRenderKey(item: string): string {
+    return item + '-' + (item === this.boundText() ? 'selected' : 'idle');
+  }
+  private hashUiValue(item: UiValue): string {
+    let raw: string = JSON.stringify(item);
+    let hash: number = 7;
+    for (let i: number = 0; i < raw.length; i++) { hash = (hash * 31 + raw.charCodeAt(i)) % 2147483647; }
+    return hash.toString(36);
   }
   private rawRepeatKey(item: UiValue): string {
     let value: UiValue | undefined = this.readItemPath(item, this.node.keyPath);
