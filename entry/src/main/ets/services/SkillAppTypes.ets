@@ -214,11 +214,12 @@ export interface RuntimeAgentTurnRequest {
   dynamicSlotIds: string[];
   toolResults: RuntimeToolResult[];
   uiIrAction?: UiIrAgentActionPayload;
+  uiIrState?: Record<string, Object>;
 }
 
 export interface UiIrAgentActionPayload {
   intent: string;
-  args: UiValue;
+  args: Object;
   expectedOutputs: string[];
   outputBindings: Record<string, string>;
   outputKinds: Record<string, UiValueKind>;

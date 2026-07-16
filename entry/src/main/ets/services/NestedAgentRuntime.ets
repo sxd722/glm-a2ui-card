@@ -15,6 +15,7 @@ import {
 } from './SkillAppTypes';
 import { runTravelTool } from './SkillWorkbench';
 import { ToolResult, TravelInputs } from './SkillTypes';
+import { UiValueKind } from './UiIrTypes';
 
 const STATE_PATCHES: string[] = ['setData', 'updateStatus'];
 const UI_PATCHES: string[] = ['setVisibility', 'setEnabled', 'replaceItems', 'appendItems',
@@ -58,6 +59,32 @@ export function normalizeRuntimeAgentTurnResult(raw: string): RuntimeAgentTurnRe
     return sanitizeTurnPayload(parsed);
   } catch (e) {
     return errorTurn('GLM Runtime 返回无法解析，已保留当前 UI。');
+  }
+}
+
+// UI IR uses a smaller wire contract than the legacy Nested App runtime. Keep
+// this check at the boundary so a permissive legacy response cannot write an
+// undeclared field into a generated app.
+export function normalizeUiIrAgentTurnResult(raw: string, expectedOutputs: string[],
+  outputKinds: Record<string, UiValueKind>): RuntimeAgentTurnResult {
+  try {
+    let parsed: Record<string, Object> = JSON.parse(cleanJson(raw)) as Record<string, Object>;
+    let state: Record<string, Object> | undefined = objectValue(parsed['state']);
+    if (state === undefined) { return errorTurn('Agent 响应缺少普通 JSON state。'); }
+    let keys: string[] = Object.keys(state);
+    for (let i: number = 0; i < keys.length; i++) {
+      if (expectedOutputs.indexOf(keys[i]) < 0) { return errorTurn('Agent 返回了未声明的输出字段：' + keys[i]); }
+      if (containsTaggedUiValue(state[keys[i]])) { return errorTurn('Agent state 不得包含 tagged UiValue。'); }
+      let expectedKind: UiValueKind | undefined = outputKinds[keys[i]];
+      if (expectedKind !== undefined && plainValueKind(state[keys[i]]) !== expectedKind) {
+        return errorTurn('Agent 输出类型不匹配：' + keys[i]);
+      }
+    }
+    let result: RuntimeAgentTurnResult = sanitizeTurnPayload(parsed);
+    if (result.status === 'error') { return result; }
+    return result;
+  } catch (e) {
+    return errorTurn('Agent 响应无法解析，已保留当前 UI。');
   }
 }
 
@@ -189,6 +216,32 @@ function sanitizeTurnPayload(raw: Record<string, Object>): RuntimeAgentTurnResul
     status: statusValue as RuntimeStatus,
     errorMessage: stringValue(raw['errorMessage'])
   };
+}
+
+function plainValueKind(value: Object): UiValueKind {
+  if (value === null || value === undefined) { return 'null'; }
+  if (Array.isArray(value)) { return 'array'; }
+  if (typeof value === 'string') { return 'string'; }
+  if (typeof value === 'number') { return 'number'; }
+  if (typeof value === 'boolean') { return 'boolean'; }
+  return 'object';
+}
+
+function containsTaggedUiValue(value: Object): boolean {
+  if (value === null || value === undefined || typeof value !== 'object') { return false; }
+  if (!Array.isArray(value)) {
+    let record: Record<string, Object> = value as Record<string, Object>;
+    if (record['kind'] !== undefined && (record['stringValue'] !== undefined || record['numberValue'] !== undefined ||
+      record['booleanValue'] !== undefined || record['arrayValue'] !== undefined || record['objectValue'] !== undefined)) {
+      return true;
+    }
+    let keys: string[] = Object.keys(record);
+    for (let i: number = 0; i < keys.length; i++) { if (containsTaggedUiValue(record[keys[i]])) { return true; } }
+    return false;
+  }
+  let values: Object[] = value as Object[];
+  for (let i: number = 0; i < values.length; i++) { if (containsTaggedUiValue(values[i])) { return true; } }
+  return false;
 }
 
 function sanitizeStatePatches(value: Object): RuntimeStatePatch[] {

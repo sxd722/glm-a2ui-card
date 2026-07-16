@@ -11,7 +11,7 @@ export type HdcDebugAction = 'setForgeSource' | 'runForgeAnalyze' | 'runForgePre
   'setNestedFields' | 'runNestedAction' | 'loadForgeImageFromDevice' | 'loadForgeImageDataUrl' |
   'resetForgeImageTransfer' | 'appendForgeImageChunk' | 'finishForgeImageTransfer' |
   'exportForgeArtifacts' | 'exportCurrentArtifacts' | 'loadTravelDemo' | 'loadReactLiteDemo' |
-  'compileReactLiteSource' | 'runReactLiteSelfTest' | 'resetWorkbench';
+  'compileReactLiteSource' | 'runReactLiteSelfTest' | 'runTravelReactLiteAcceptance' | 'resetWorkbench';
 export type HdcDebugScope = 'forge' | 'runner' | 'any';
 
 export interface HdcDebugCommand {

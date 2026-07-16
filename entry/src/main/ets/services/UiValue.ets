@@ -56,6 +56,38 @@ export function uiValueToDisplayString(value: UiValue | undefined): string {
   return JSON.stringify(value);
 }
 
+// Convert the internal tagged representation into the ordinary JSON shape
+// expected by the Agent wire contract. Keep this boundary explicit so tagged
+// UiValue implementation fields never leak into a network payload.
+export function uiValueToPlainObject(value: UiValue): Object {
+  if (value.kind === 'null') { return JSON.parse('null') as Object; }
+  if (value.kind === 'string') { return value.stringValue; }
+  if (value.kind === 'number') { return value.numberValue; }
+  if (value.kind === 'boolean') { return value.booleanValue; }
+  if (value.kind === 'array') {
+    let result: Object[] = [];
+    for (let i: number = 0; i < value.arrayValue.length; i++) {
+      result.push(uiValueToPlainObject(value.arrayValue[i]));
+    }
+    return result;
+  }
+  let record: Record<string, Object> = {};
+  let keys: string[] = Object.keys(value.objectValue);
+  for (let i: number = 0; i < keys.length; i++) {
+    if (isSafeKey(keys[i])) { record[keys[i]] = uiValueToPlainObject(value.objectValue[keys[i]]); }
+  }
+  return record;
+}
+
+export function uiRecordToPlainObject(value: Record<string, UiValue>): Record<string, Object> {
+  let result: Record<string, Object> = {};
+  let keys: string[] = Object.keys(value);
+  for (let i: number = 0; i < keys.length; i++) {
+    if (isSafeKey(keys[i])) { result[keys[i]] = uiValueToPlainObject(value[keys[i]]); }
+  }
+  return result;
+}
+
 export function uiValueToBoolean(value: UiValue | undefined): boolean {
   if (value === undefined || value.kind === 'null') { return false; }
   if (value.kind === 'boolean') { return value.booleanValue; }
