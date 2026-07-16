@@ -116,11 +116,15 @@ function applyAction(session: UiIrSessionState, action: UiAction, scope: UiEvalu
     return { kind: 'agent.invoke', action: action, args: evaluateUiExpression(action.toolArgs, session, scope) };
   }
   if (action.kind === 'action.transaction') {
+    let working: UiIrSessionState = cloneSession(session);
+    working.errorMessage = '';
     for (let i: number = 0; i < action.steps.length; i++) {
-      let nested = applyAction(session, action.steps[i], scope);
+      let nested = applyAction(working, action.steps[i], scope);
       if (nested !== undefined) { session.errorMessage = 'transaction 不允许外部 Effect。'; return undefined; }
-      if (session.errorMessage.length > 0) { return undefined; }
+      if (working.errorMessage.length > 0) { session.errorMessage = working.errorMessage; return undefined; }
     }
+    session.activePageId = working.activePageId; session.routeStack = working.routeStack; session.state = working.state;
+    session.assets = working.assets; session.status = working.status; session.agentTrace = working.agentTrace;
     return undefined;
   }
   return undefined;

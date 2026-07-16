@@ -83,6 +83,7 @@ const RUNTIME_AGENT_SYSTEM_PROMPT: string =
   'Run one Nested App agent turn. Return one JSON object only. Prefer the compact fields turnId,assistantText,state,toolCalls,navigateTo,suggestedActions,status,errorMessage. ' +
   'All fields except assistantText may be omitted when unused; state is a flat map and values may be strings, booleans, numbers, or JSON arrays. ' +
   'Only call availableTools. Use toolCalls only for reasoning-required orchestration; simple UI state is handled locally by the Action DSL. ' +
+  'For uiIrAction, respect intent, expectedOutputs, outputBindings and outputKinds. Return strict JSON state only for expectedOutputs; never create additional state fields, patch the UI IR, or navigate unless explicitly supplied. ' +
   'Legacy statePatches and uiPatches are accepted but avoid them. Use only supplied dynamicSlotIds. Return at most 4 suggestedActions. Never request or expose credentials.';
 
 export async function requestA2uiDslFromGlm(prompt: string, config: GlmLocalConfig): Promise<string> {

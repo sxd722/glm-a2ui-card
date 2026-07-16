@@ -65,9 +65,53 @@ function compilePage(page: ReactLiteAstNode, context: ReactLiteCompileContext, d
   let title: string = attrString(page, 'title', id);
   let preset: string = attrString(page, 'layoutPreset', inferPreset(page));
   let children: UiIrNode[] = [];
-  for (let i: number = 0; i < page.children.length; i++) { children.push(compileNode(page.children[i], preset, diagnostics)); }
+  let overlays: UiIrNode[] = [];
+  for (let i: number = 0; i < page.children.length; i++) {
+    let compiled = compileNode(page.children[i], preset, diagnostics);
+    let extracted = extractOverlayNodes(compiled);
+    if (extracted.content !== undefined) { children.push(extracted.content); }
+    overlays = overlays.concat(extracted.overlays);
+  }
   let root: UiIrNode = elementNode(id + '-root', 'Column', {}, defaultClass('Page', preset), {}, children);
-  return { id: id, title: title, scroll: attrBoolean(page, 'scroll', true), layoutPreset: preset, root: root };
+  return { id: id, title: title, scroll: attrBoolean(page, 'scroll', true), layoutPreset: preset, root: root, overlays: overlays };
+}
+
+interface OverlayExtraction {
+  content: UiIrNode | undefined;
+  overlays: UiIrNode[];
+}
+
+function extractOverlayNodes(node: UiIrNode): OverlayExtraction {
+  if (node.component === 'Sheet') {
+    return { content: undefined, overlays: [node] };
+  }
+  if (node.kind === 'forEach') {
+    // A Sheet inside a repeated item would lose the item alias when lifted to
+    // the page host. Keep the list intact until a dedicated portal contract exists.
+    return { content: node, overlays: [] };
+  }
+  if (node.children.length === 0) {
+    return { content: node, overlays: [] };
+  }
+  let contentChildren: UiIrNode[] = [];
+  let overlayChildren: UiIrNode[] = [];
+  for (let i: number = 0; i < node.children.length; i++) {
+    let child = extractOverlayNodes(node.children[i]);
+    if (child.content !== undefined) { contentChildren.push(child.content); }
+    overlayChildren = overlayChildren.concat(child.overlays);
+  }
+  if (node.kind === 'if' && overlayChildren.length > 0) {
+    let overlayWrapper: UiIrNode = cloneNodeWithChildren(node, node.id + '-overlay', overlayChildren);
+    overlayChildren = [overlayWrapper];
+  }
+  let content: UiIrNode | undefined = contentChildren.length > 0 ? cloneNodeWithChildren(node, node.id, contentChildren) : undefined;
+  return { content: content, overlays: overlayChildren };
+}
+
+function cloneNodeWithChildren(node: UiIrNode, id: string, children: UiIrNode[]): UiIrNode {
+  return { kind: node.kind, id: id, component: node.component, props: node.props, binding: node.binding,
+    className: node.className, actions: node.actions, children: children, condition: node.condition,
+    source: node.source, itemAlias: node.itemAlias, keyPath: node.keyPath };
 }
 
 function compileNode(node: ReactLiteAstNode, preset: string, diagnostics: ReactLiteDiagnostic[] = []): UiIrNode {
@@ -158,15 +202,19 @@ function propsFrom(node: ReactLiteAstNode): Record<string, UiExpression> {
   let props: Record<string, UiExpression> = {};
   for (let i: number = 0; i < node.attributes.length; i++) {
     let item: ReactLiteAstAttribute = node.attributes[i];
-    if (item.name === 'className' || item.name === 'bind' || item.name === 'key' || item.name === 'value' || item.name === 'onPress' || item.name === 'onSubmit' ||
+    if (item.name === 'className' || item.name === 'bind' || item.name === 'key' || isCompilerOnlyAttribute(node.component, item.name) || item.name === 'onPress' || item.name === 'onSubmit' ||
       item.name === 'onDismiss' || item.name === 'onSelect' || item.name === 'onReachEnd' || item.name === 'onLongPress' ||
       item.name === 'onChange' || item.name === 'item' || item.name === 'keyBy') { continue; }
-    if (item.value !== undefined) { props[item.name === 'options' ? 'items' : item.name] = compileExpression(item.value); }
+    let propName: string = isChoiceComponent(node.component) && item.name === 'options' ? 'items' : item.name;
+    if (item.value !== undefined) { props[propName] = compileExpression(item.value); }
     else if (item.booleanValue) { props[item.name] = literal(booleanValue(true)); }
     else if (item.stringValue.length > 0) { props[item.name] = literal(stringValue(item.stringValue)); }
   }
   return props;
 }
+
+function isChoiceComponent(component: string): boolean { return ['ChoiceChips', 'SegmentedControl', 'Tabs'].indexOf(component) >= 0; }
+function isCompilerOnlyAttribute(component: string, attribute: string): boolean { return isChoiceComponent(component) && attribute === 'value'; }
 
 function compileAction(expression: ReactLiteExpression, line: number, column: number): UiAction {
   let kind: UiActionKind = 'state.set'; let args: ReactLiteExpression[] = expression.args;
@@ -211,6 +259,10 @@ function compileAgentAction(action: UiAction, args: ReactLiteExpression[]): void
         action.resultBindings[bind.properties[i].key] = expressionText(bind.properties[i].value);
       }
     }
+    let success = objectProperty(args[0], 'onSuccess');
+    let failure = objectProperty(args[0], 'onError');
+    if (success !== undefined) { action.successSteps = [compileAction(success, 0, 0)]; }
+    if (failure !== undefined) { action.errorSteps = [compileAction(failure, 0, 0)]; }
   } else {
     action.intent = literalText(args, 0);
     action.toolArgs = args[1] === undefined ? literal(objectValue({})) : compileExpression(args[1]);

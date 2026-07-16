@@ -69,6 +69,10 @@ function validateNode(node: UiIrNode, depth: number, forEachDepth: number, pageI
   }
   if (node.binding.length > 0 && !safePath(node.binding)) { diagnostics.push(error('UI1013', '绑定路径不安全', node.id, 'binding')); }
   if (node.binding.length > 0 && !bindingRootExists(node.binding, state, aliases)) { diagnostics.push(error('UI1029', '绑定字段不存在：' + node.binding, node.id, 'binding')); }
+  if (node.binding.length > 0 && ((node.component === 'Checkbox' && node.props['checked'] !== undefined) ||
+    (node.component === 'Toggle' && node.props['value'] !== undefined))) {
+    diagnostics.push(error('UI1053', '受控组件不能同时使用 bind', node.id, 'binding'));
+  }
   validateNodeProps(node, diagnostics);
   if (node.kind === 'if' && node.condition === undefined) { diagnostics.push(error('UI1014', 'If 缺少条件', node.id, 'condition')); }
   if (node.kind === 'forEach') {
@@ -112,6 +116,10 @@ function validateAction(action: UiAction, pageIds: string[], state: Record<strin
   if (action.kind === 'action.sequence') { validateSequence(action, diagnostics); }
   if (action.kind === 'action.transaction') { validateTransaction(action, diagnostics); }
   if (action.kind === 'agent.invoke') { validateAgentAction(action, state, diagnostics); }
+  if (action.kind === 'agent.invoke') {
+    validateLocalLifecycleSteps(action.successSteps, pageIds, state, diagnostics, toolNames, budget, action.id);
+    validateLocalLifecycleSteps(action.errorSteps, pageIds, state, diagnostics, toolNames, budget, action.id);
+  }
   if ((action.kind === 'list.appendWithId' || action.kind === 'list.updateWhere') &&
     (action.value === undefined || action.value.kind !== 'object')) {
     diagnostics.push(error('UI1046', action.kind === 'list.appendWithId' ? 'appendWithId 需要对象值' : 'updateWhere 需要对象 patch', action.id, 'value'));
@@ -121,6 +129,15 @@ function validateAction(action: UiAction, pageIds: string[], state: Record<strin
     diagnostics.push(error('UI1047', 'appendWithId 缺少稳定 ID 前缀', action.id, 'idPrefix'));
   }
   for (let i: number = 0; i < action.steps.length; i++) { validateAction(action.steps[i], pageIds, state, diagnostics, toolNames, budget); }
+}
+
+function validateLocalLifecycleSteps(steps: UiAction[] | undefined, pageIds: string[], state: Record<string, UiValue>,
+  diagnostics: UiIrDiagnostic[], toolNames: string[], budget: ValidationBudget, parentId: string): void {
+  if (steps === undefined) { return; }
+  for (let i: number = 0; i < steps.length; i++) {
+    if (isExternalEffect(steps[i])) { diagnostics.push(error('UI1054', 'Agent success/error steps 只能包含本地 Action', parentId, 'steps')); }
+    validateAction(steps[i], pageIds, state, diagnostics, toolNames, budget);
+  }
 }
 
 function countNodeId(id: string, budget: ValidationBudget): number {

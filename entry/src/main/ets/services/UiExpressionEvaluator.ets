@@ -96,7 +96,10 @@ function intrinsic(name: string, args: UiExpression[], state: Record<string, UiV
     let field: string = uiValueToDisplayString(values[1]); let expected: UiValue = values[2];
     return arrayValue(list.arrayValue.filter((item: UiValue) => {
       let actual: UiValue | undefined = item.kind === 'object' ? item.objectValue[field] : undefined;
-      if (name === 'filterEq') { return uiValueEquals(actual, expected); }
+      if (name === 'filterEq') {
+        // "全部" is the sample's explicit no-filter choice.
+        return expected.kind === 'string' && expected.stringValue === '全部' ? true : uiValueEquals(actual, expected);
+      }
       if (name === 'filterNotEq') { return !uiValueEquals(actual, expected); }
       return uiValueToDisplayString(actual).indexOf(uiValueToDisplayString(expected)) >= 0;
     }));

@@ -75,7 +75,7 @@ import { AppBlueprint, AppBlueprintParseResult, ForgeDraft, RuntimeAgentTurnRequ
 import { forgeReactLite } from '../services/ReactLiteForgeService';
 import { compileReactLiteMapSmoke, compileTodoReactLite, compileTravelReactLite, TRAVEL_REACT_LITE_SOURCE } from '../services/ReactLiteExamples';
 import { ReactLiteCompileResult, compileReactLite } from '../services/ReactLiteCompiler';
-import { UiIrSpec } from '../services/UiIrTypes';
+import { UiAction, UiIrNode, UiIrSpec } from '../services/UiIrTypes';
 import { applyRuntimeAgentTurn, buildRuntimeAgentTurnRequest, normalizeRuntimeAgentTurnResult } from '../services/NestedAgentRuntime';
 import { saveForgeDraft, saveInstalledNestedApp, saveRunnerSession } from '../services/SkillAppStore';
 import {
@@ -2174,12 +2174,51 @@ struct Index {
     let mapSmoke = compileReactLiteMapSmoke(this.forgeDraft.manifest, this.forgeDraft.blueprint);
     let todoCount: number = todo.ok && todo.value !== undefined && todo.value.initialState['tasks'] !== undefined &&
       todo.value.initialState['tasks'].kind === 'array' ? todo.value.initialState['tasks'].arrayValue.length : 0;
-    let passed: boolean = result.ok && todo.ok && mapSmoke.ok && todoCount === 5;
-    this.statusText = passed ? '[HDC] React Lite travel/todo/map self-test passed' : '[HDC] React Lite self-test failed';
-    this.forgeReactLiteDiagnostics = passed ? 'travel compile passed; todo compile passed; map compile passed; initial tasks=5' :
+    let travelSpec: UiIrSpec | undefined = result.value;
+    let todoSpec: UiIrSpec | undefined = todo.value;
+    let travelPage = travelSpec === undefined || travelSpec.pages.length === 0 ? undefined : travelSpec.pages[0];
+    let passed: boolean = result.ok && todo.ok && mapSmoke.ok && todoCount === 5 && travelSpec !== undefined &&
+      todoSpec !== undefined && this.countUiIrNodes(todoSpec.pages[0].root, 'forEach') >= 1 &&
+      this.countUiIrNodes(travelSpec.pages[0].root, 'forEach') >= 2 && this.hasStableUiIrKeys(travelSpec.pages[0].root) &&
+      this.hasUiIrAgentContract(travelSpec.pages[0].root) && this.hasUiIrProgressValue(travelSpec.pages[0].root) &&
+      travelPage !== undefined && travelPage.overlays !== undefined && travelPage.overlays.length > 0;
+    this.statusText = passed ? '[HDC] React Lite travel/todo/map acceptance passed' : '[HDC] React Lite acceptance failed';
+    this.forgeReactLiteDiagnostics = passed ? 'travel/todo/map compile passed; initial tasks=5; stable keys; agent contract; progress value; sheet overlay' :
       JSON.stringify({ travel: result.diagnostics, todo: todo.diagnostics, todoUi: todo.uiDiagnostics,
-        map: mapSmoke.diagnostics, mapUi: mapSmoke.uiDiagnostics, todoCount: todoCount });
+        map: mapSmoke.diagnostics, mapUi: mapSmoke.uiDiagnostics, todoCount: todoCount,
+        travelForEach: travelSpec === undefined ? 0 : this.countUiIrNodes(travelSpec.pages[0].root, 'forEach'),
+        travelHasAgent: travelSpec === undefined ? false : this.hasUiIrAgentContract(travelSpec.pages[0].root),
+        travelHasProgress: travelSpec === undefined ? false : this.hasUiIrProgressValue(travelSpec.pages[0].root),
+        travelHasOverlay: travelPage !== undefined && travelPage.overlays !== undefined && travelPage.overlays.length > 0 });
     if (!passed) { throw new Error(this.forgeReactLiteDiagnostics); }
+  }
+
+  private countUiIrNodes(node: UiIrNode, kind: string): number {
+    let total: number = node.kind === kind ? 1 : 0;
+    for (let i: number = 0; i < node.children.length; i++) { total += this.countUiIrNodes(node.children[i], kind); }
+    return total;
+  }
+
+  private hasStableUiIrKeys(node: UiIrNode): boolean {
+    if (node.kind === 'forEach' && node.keyPath.length === 0) { return false; }
+    for (let i: number = 0; i < node.children.length; i++) { if (!this.hasStableUiIrKeys(node.children[i])) { return false; } }
+    return true;
+  }
+
+  private hasUiIrAgentContract(node: UiIrNode): boolean {
+    let actionNames: string[] = Object.keys(node.actions);
+    for (let i: number = 0; i < actionNames.length; i++) {
+      let action: UiAction = node.actions[actionNames[i]];
+      if (action.kind === 'agent.invoke' && action.intent.length > 0 && Object.keys(action.resultBindings).length > 0) { return true; }
+    }
+    for (let i: number = 0; i < node.children.length; i++) { if (this.hasUiIrAgentContract(node.children[i])) { return true; } }
+    return false;
+  }
+
+  private hasUiIrProgressValue(node: UiIrNode): boolean {
+    if (node.component === 'Progress' && node.props['value'] !== undefined) { return true; }
+    for (let i: number = 0; i < node.children.length; i++) { if (this.hasUiIrProgressValue(node.children[i])) { return true; } }
+    return false;
   }
 
   private resetWorkbenchFromDebug(): void {

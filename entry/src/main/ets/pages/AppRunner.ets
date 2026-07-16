@@ -28,7 +28,7 @@ import {
   buildRuntimeAgentTurnRequest,
   normalizeRuntimeAgentTurnResult
 } from '../services/NestedAgentRuntime';
-import { UiAction, UiEvaluationScope, UiIrSessionState, UiIrSpec, UiValue } from '../services/UiIrTypes';
+import { UiAction, UiEvaluationScope, UiIrNode, UiIrSessionState, UiIrSpec, UiValue, UiValueKind } from '../services/UiIrTypes';
 import { addUiIrAsset, activeUiIrPage, createUiIrSession, reduceUiAction, updateUiBinding } from '../services/UiIrRuntime';
 import { stringValue as uiStringValue, uiValueFromObject, uiValueToDisplayString } from '../services/UiValue';
 import {
@@ -38,7 +38,7 @@ import {
   saveRunnerSession,
   saveUiIrRunnerSession
 } from '../services/SkillAppStore';
-import { InstalledSkillApp, RuntimeAgentTurnRequest, RuntimeAgentTurnResult, SkillManifest, UiIrRunnerSessionSnapshot } from '../services/SkillAppTypes';
+import { InstalledSkillApp, RuntimeAgentTurnRequest, RuntimeAgentTurnResult, SkillManifest, UiIrAgentActionPayload, UiIrRunnerSessionSnapshot } from '../services/SkillAppTypes';
 import { pickFileSystemImageAsDataUrl, runTravelTool } from '../services/SkillWorkbench';
 import { TravelInputs } from '../services/SkillTypes';
 import { HDC_DEBUG_EVENT, HdcDebugCommand, HdcDebugSnapshot, recordHdcDebugResult,
@@ -172,38 +172,39 @@ struct AppRunner {
 
   @Builder
   RenderUiIrPage() {
-    Column() {
+    Stack() {
       if (activeUiIrPage(this.uiIrSession).scroll) {
-        Scroll() {
-          UiIrRenderer({
-            node: activeUiIrPage(this.uiIrSession).root,
-            session: this.uiIrSession,
-            onAction: (action: UiAction, scope?: UiEvaluationScope): void => { this.runUiIrAction(action, scope); },
-            onValueChange: (key: string, value: UiValue): void => {
-              this.uiIrSession = updateUiBinding(this.uiIrSession, key, value);
-              this.persistRunnerState();
-            },
-            onDiagnostic: (message: string): void => { this.statusText = message; }
-          })
-        }
-        .width('100%')
-        .layoutWeight(1)
-        .scrollBar(BarState.Auto)
-      } else {
-        UiIrRenderer({
-          node: activeUiIrPage(this.uiIrSession).root,
-          session: this.uiIrSession,
-          onAction: (action: UiAction, scope?: UiEvaluationScope): void => { this.runUiIrAction(action, scope); },
-          onValueChange: (key: string, value: UiValue): void => {
-            this.uiIrSession = updateUiBinding(this.uiIrSession, key, value);
-            this.persistRunnerState();
-          },
-          onDiagnostic: (message: string): void => { this.statusText = message; }
-        })
-      }
+        Scroll() { this.RenderUiIrRoot(); }.width('100%').height('100%').scrollBar(BarState.Auto)
+      } else { this.RenderUiIrRoot(); }
+      this.RenderUiIrOverlays();
     }
     .width('100%')
     .layoutWeight(1)
+  }
+
+  @Builder
+  RenderUiIrRoot() {
+    UiIrRenderer({
+      node: activeUiIrPage(this.uiIrSession).root, session: this.uiIrSession,
+      onAction: (action: UiAction, scope?: UiEvaluationScope): void => { this.runUiIrAction(action, scope); },
+      onValueChange: (key: string, value: UiValue): void => { this.uiIrSession = updateUiBinding(this.uiIrSession, key, value); this.persistRunnerState(); },
+      onDiagnostic: (message: string): void => { this.statusText = message; }
+    })
+  }
+
+  @Builder
+  RenderUiIrOverlays() {
+    ForEach(this.overlayNodes(), (overlay: UiIrNode) => {
+      UiIrRenderer({ node: overlay, session: this.uiIrSession,
+        onAction: (action: UiAction, scope?: UiEvaluationScope): void => { this.runUiIrAction(action, scope); },
+        onValueChange: (key: string, value: UiValue): void => { this.uiIrSession = updateUiBinding(this.uiIrSession, key, value); this.persistRunnerState(); },
+        onDiagnostic: (message: string): void => { this.statusText = message; } })
+    }, (overlay: UiIrNode) => overlay.id);
+  }
+
+  private overlayNodes(): UiIrNode[] {
+    let overlays = activeUiIrPage(this.uiIrSession).overlays;
+    return overlays === undefined ? [] : overlays;
   }
 
   private runtimeErrorText(): string { return this.uiIrEnabled ? this.uiIrSession.errorMessage : this.nestedSession.errorMessage; }
@@ -336,24 +337,35 @@ struct AppRunner {
     try {
       this.uiIrSession.status = 'thinking';
       this.statusText = 'GLM 正在处理：' + action.intent;
+      let expectedOutputs: string[] = Object.keys(action.resultBindings);
+      let outputKinds: Record<string, UiValueKind> = {};
+      for (let i: number = 0; i < expectedOutputs.length; i++) {
+        let current = readUiStatePath(this.uiIrSession.state, action.resultBindings[expectedOutputs[i]]);
+        if (current !== undefined) { outputKinds[expectedOutputs[i]] = current.kind; }
+      }
+      let uiIrAction: UiIrAgentActionPayload = { intent: action.intent, args: reduced.effect.args,
+        expectedOutputs: expectedOutputs, outputBindings: action.resultBindings, outputKinds: outputKinds };
       let request: RuntimeAgentTurnRequest = {
         turnId: 'turn-' + Date.now().toString(), appId: this.appId, skillId: this.manifest.skillId,
-        currentPageId: this.uiIrSession.activePageId, actionId: action.id, actionPayload: JSON.stringify(reduced.effect.args),
+        currentPageId: this.uiIrSession.activePageId, actionId: action.id, actionPayload: JSON.stringify(uiIrAction),
         state: uiStateStrings(this.uiIrSession.state), availableTools: this.manifest.toolContracts.filter((tool) => tool.implemented),
-        dynamicSlotIds: [], toolResults: []
+        dynamicSlotIds: [], toolResults: [], uiIrAction: uiIrAction
       };
       let raw: string = await requestNestedRuntimeTurnFromGlm(request, { baseUrl: GLM_CODING_ENDPOINT, apiKey: GLM_LOCAL_API_KEY, model: GLM_DEFAULT_MODEL });
       let result: RuntimeAgentTurnResult = normalizeRuntimeAgentTurnResult(raw);
       let bindingKeys: string[] = Object.keys(action.resultBindings);
       let rejectedPatch: boolean = false;
+      let bindingFailed: boolean = false;
       for (let i: number = 0; i < result.statePatches.length; i++) {
         let target: string | undefined = action.resultBindings[result.statePatches[i].key];
-        if (target !== undefined) { this.uiIrSession = updateUiBinding(this.uiIrSession, target, uiValueFromObject(result.statePatches[i].value)); }
+        if (target !== undefined) { let rawValue: Object = result.statePatches[i].rawValue === undefined ? result.statePatches[i].value : result.statePatches[i].rawValue as Object; this.uiIrSession = updateUiBinding(this.uiIrSession, target, uiValueFromObject(rawValue)); if (this.uiIrSession.errorMessage.length > 0) { bindingFailed = true; } }
         else { rejectedPatch = true; }
       }
-      if (rejectedPatch || (bindingKeys.length === 0 && result.statePatches.length > 0)) {
+      if (rejectedPatch || bindingFailed || (bindingKeys.length === 0 && result.statePatches.length > 0)) {
         this.uiIrSession.status = 'error';
         this.uiIrSession.errorMessage = 'Agent 返回了未声明的字段，已拒绝写入。';
+        if (action.statusPath !== undefined && action.statusPath.length > 0) { this.uiIrSession = updateUiBinding(this.uiIrSession, action.statusPath, uiStringValue('error')); }
+        await this.runUiIrLocalSteps(action.errorSteps);
       } else {
         if (action.statusPath !== undefined && action.statusPath.length > 0) {
           this.uiIrSession = updateUiBinding(this.uiIrSession, action.statusPath, uiStringValue(result.status === 'complete' ? 'complete' : 'error'));
@@ -367,6 +379,8 @@ struct AppRunner {
     } catch (error) {
       this.uiIrSession.status = 'error';
       this.uiIrSession.errorMessage = 'GLM Runtime Turn 失败。';
+      if (action.statusPath !== undefined && action.statusPath.length > 0) { this.uiIrSession = updateUiBinding(this.uiIrSession, action.statusPath, uiStringValue('error')); }
+      await this.runUiIrLocalSteps(action.errorSteps);
       this.statusText = 'Agent 失败，但已保留当前 UI。';
     }
     await this.persistRunnerState();
@@ -477,6 +491,15 @@ struct AppRunner {
 function stringValue(values: Record<string, Object>, key: string): string {
   let value: Object | undefined = values[key];
   return value !== undefined && typeof value === 'string' ? value as string : '';
+}
+
+function readUiStatePath(state: Record<string, UiValue>, path: string): UiValue | undefined {
+  if (path.length === 0) { return undefined; }
+  let parts: string[] = path.split('.'); let current: UiValue | undefined = state[parts[0]];
+  for (let i: number = 1; i < parts.length && current !== undefined; i++) {
+    current = current.kind === 'object' ? current.objectValue[parts[i]] : undefined;
+  }
+  return current;
 }
 
 function emptyUiIrSession(): UiIrSessionState {

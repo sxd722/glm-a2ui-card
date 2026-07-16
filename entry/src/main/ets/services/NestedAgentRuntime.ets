@@ -172,7 +172,7 @@ function sanitizeTurnPayload(raw: Record<string, Object>): RuntimeAgentTurnResul
   if (state !== undefined) {
     let keys: string[] = Object.keys(state);
     for (let i: number = 0; i < keys.length; i++) {
-      statePatches.push({ op: 'setData', key: keys[i], value: stringValue(state[keys[i]]) });
+      statePatches.push({ op: 'setData', key: keys[i], value: stringValue(state[keys[i]]), rawValue: state[keys[i]] });
     }
   }
   let toolCalls: RuntimeToolCall[] = sanitizeToolCalls(raw['toolCalls']);
@@ -197,8 +197,8 @@ function sanitizeStatePatches(value: Object): RuntimeStatePatch[] {
   for (let i: number = 0; i < value.length; i++) {
     let item: Record<string, Object> = value[i] as Record<string, Object>;
     let op: string = stringValue(item['op']); let key: string = stringValue(item['key']);
-    if (op === 'setData' && key.length > 0) { result.push({ op: 'setData', key: key, value: stringValue(item['value']) }); }
-    else if (op === 'updateStatus') { result.push({ op: 'updateStatus', key: '', value: stringValue(item['value']) }); }
+    if (op === 'setData' && key.length > 0) { result.push({ op: 'setData', key: key, value: stringValue(item['value']), rawValue: item['value'] }); }
+    else if (op === 'updateStatus') { result.push({ op: 'updateStatus', key: '', value: stringValue(item['value']), rawValue: item['value'] }); }
   }
   return result;
 }

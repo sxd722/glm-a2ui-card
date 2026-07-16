@@ -1,7 +1,7 @@
 import { tokenizeReactLite } from './ReactLiteTokenizer';
 import { ReactLiteAst, ReactLiteAstAttribute, ReactLiteAstNode, ReactLiteDiagnostic, ReactLiteExpression,
   ReactLiteExpressionProperty, ReactLiteParseResult, ReactLiteToken } from './ReactLiteTypes';
-import { reactLiteComponentNames } from './ReactLiteCatalog';
+import { reactLiteAllowedEvents, reactLiteAllowedProps, reactLiteComponentNames } from './ReactLiteCatalog';
 
 const COMPONENTS: string[] = reactLiteComponentNames();
 const PRECEDENCE: Record<string, number> = { '??': 1, '||': 2, '&&': 3, '===': 4, '!==': 4, '==': 4, '!=': 4,
@@ -75,6 +75,7 @@ class Parser {
     }
     let attributes: ReactLiteAstAttribute[] = [];
     while (!this.checkValue('>') && !this.checkValue('/') && !this.checkKind('eof')) { attributes.push(this.parseAttribute()); }
+    this.validateAttributes(component, attributes);
     if (this.checkValue('/')) { this.index++; this.expectValue('>', 'RL1001'); return nodeFor(component, attributes, [], open); }
     this.expectValue('>', 'RL1001');
     let children: ReactLiteAstNode[] = [];
@@ -94,6 +95,18 @@ class Parser {
     if (endName !== component) { this.addError('RL1001', 'JSX 标签未正确闭合。', this.current()); }
     this.expectValue('>', 'RL1001');
     return nodeFor(component, attributes, children, open);
+  }
+
+  private validateAttributes(component: string, attributes: ReactLiteAstAttribute[]): void {
+    let allowedProps: string[] = reactLiteAllowedProps(component); let allowedEvents: string[] = reactLiteAllowedEvents(component);
+    for (let i: number = 0; i < attributes.length; i++) {
+      let name: string = attributes[i].name;
+      if (name.indexOf('on') === 0) {
+        if (allowedEvents.indexOf(name) < 0) { this.addError('RL1008', '组件不支持事件：' + component + '.' + name, this.current(), '使用组件目录中的事件。'); }
+      } else if (allowedProps.indexOf(name) < 0) {
+        this.addError('RL1009', '组件不支持属性：' + component + '.' + name, this.current(), '使用组件目录中的属性。');
+      }
+    }
   }
 
   private parseAttribute(): ReactLiteAstAttribute {
@@ -136,6 +149,12 @@ class Parser {
       let jsx = this.parseJsxNode();
       return { kind: 'jsx', value: '', operator: '', path: [], items: [], properties: [], callee: '', args: [],
         jsxNode: jsx, line: current.line, column: current.column };
+    }
+    if (this.checkValue('(') && this.peek(1).value === ')' && this.peek(2).value === '=>') {
+      this.index++; this.expectValue(')', 'RL1001'); this.expectValue('=>', 'RL1001');
+      let body = this.parseExpression();
+      return { kind: 'lambda', value: '', operator: '=>', path: [], items: [], properties: [], callee: '', args: [],
+        parameter: '', body: body, line: current.line, column: current.column };
     }
     if (this.checkValue('(') && this.peek(1).kind === 'identifier' && this.peek(2).value === ')' && this.peek(3).value === '=>') {
       this.index++; let parameter = this.current().value; this.index++; this.expectValue(')', 'RL1001'); this.expectValue('=>', 'RL1001');

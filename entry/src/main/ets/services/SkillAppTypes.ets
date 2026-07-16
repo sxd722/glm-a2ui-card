@@ -1,6 +1,6 @@
 import { ArkUiSpec, LocalImageAsset } from './ArkUiTypes';
 import { ReactLiteDiagnostic } from './ReactLiteTypes';
-import { LocalImageAssetRef, UiIrSpec, UiValue } from './UiIrTypes';
+import { LocalImageAssetRef, UiIrSpec, UiValue, UiValueKind } from './UiIrTypes';
 
 export type SkillSourceKind = 'image' | 'file' | 'repository' | 'text';
 export type ForgeDraftStatus = 'import' | 'analyzed' | 'configured' | 'preview' | 'installed' | 'error';
@@ -192,6 +192,7 @@ export interface RuntimeStatePatch {
   op: RuntimePatchOperation;
   key: string;
   value: string;
+  rawValue?: Object;
 }
 
 export interface RuntimeUiPatch {
@@ -212,6 +213,15 @@ export interface RuntimeAgentTurnRequest {
   availableTools: ToolContract[];
   dynamicSlotIds: string[];
   toolResults: RuntimeToolResult[];
+  uiIrAction?: UiIrAgentActionPayload;
+}
+
+export interface UiIrAgentActionPayload {
+  intent: string;
+  args: UiValue;
+  expectedOutputs: string[];
+  outputBindings: Record<string, string>;
+  outputKinds: Record<string, UiValueKind>;
 }
 
 export interface RuntimeAgentTurnResult {

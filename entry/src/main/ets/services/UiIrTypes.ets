@@ -91,6 +91,7 @@ export interface UiIrPage {
   scroll: boolean;
   layoutPreset: string;
   root: UiIrNode;
+  overlays?: UiIrNode[];
 }
 
 export interface UiIrTheme {

@@ -1,6 +1,6 @@
 import { ArkUiTheme, ResolvedArkUiStyle } from '../services/ArkUiTypes';
 import { resolveTailwindStyle } from '../services/ArkUiCompiler';
-import { UiAction, UiEvaluationScope, UiIrNode, UiIrSessionState, UiValue } from '../services/UiIrTypes';
+import { UiAction, UiEvaluationScope, UiExpression, UiIrNode, UiIrSessionState, UiValue } from '../services/UiIrTypes';
 import { assetDataUrl, evaluateUiExpression } from '../services/UiIrRuntime';
 import { booleanValue, numberValue, stringValue, uiValueToBoolean, uiValueToDisplayString } from '../services/UiValue';
 
@@ -78,8 +78,8 @@ export struct UiIrRenderer {
       }
     } else if (this.node.component === 'Toggle' || this.node.component === 'Checkbox') {
       Row({ space: 10 }) {
-        if (this.node.component === 'Toggle') { Toggle({ type: ToggleType.Switch, isOn: this.boundBoolean() }).onChange((value: boolean) => { let nextValue = booleanValue(value); this.onValueChange(this.node.binding, nextValue); this.invokeAction('change', this.changeEvent(nextValue)); }); }
-        else { Checkbox({ name: this.node.id, group: 'ui-ir' }).select(this.boundBoolean()).onChange((value: boolean) => { let nextValue = booleanValue(value); this.onValueChange(this.node.binding, nextValue); this.invokeAction('change', this.changeEvent(nextValue)); }); }
+        if (this.node.component === 'Toggle') { Toggle({ type: ToggleType.Switch, isOn: this.boundBoolean() }).onChange((value: boolean) => { let nextValue = booleanValue(value); this.updateBooleanBinding(nextValue); this.invokeAction('change', this.changeEvent(nextValue)); }); }
+        else { Checkbox({ name: this.node.id, group: 'ui-ir' }).select(this.boundBoolean()).onChange((value: boolean) => { let nextValue = booleanValue(value); this.updateBooleanBinding(nextValue); this.invokeAction('change', this.changeEvent(nextValue)); }); }
         Text(this.propText('label')).fontSize(this.style().fontSize).fontColor(this.style().foregroundColor);
       }.width('100%').alignItems(VerticalAlign.Center);
     } else if (this.node.component === 'ChoiceChips' || this.node.component === 'SegmentedControl' || this.node.component === 'Tabs') {
@@ -118,11 +118,15 @@ export struct UiIrRenderer {
 
   private style(): ResolvedArkUiStyle { let theme: ArkUiTheme = { colors: this.session.app.theme.tokens }; return resolveTailwindStyle(this.node.className, theme); }
   private propText(name: string): string { return uiValueToDisplayString(evaluateUiExpression(this.node.props[name], this.session, this.scope)); }
-  private boundText(): string { return uiValueToDisplayString(evaluateUiExpression({ kind: 'path', root: 'state', segments: this.node.binding.split('.'), operator: '', items: [], properties: [], callee: '', args: [] }, this.session, this.scope)); }
-  private boundBoolean(): boolean { return uiValueToBoolean(evaluateUiExpression({ kind: 'path', root: 'state', segments: this.node.binding.split('.'), operator: '', items: [], properties: [], callee: '', args: [] }, this.session, this.scope)); }
+  private boundText(): string { return uiValueToDisplayString(evaluateUiExpression(this.bindingExpression(), this.session, this.scope)); }
+  private boundBoolean(): boolean {
+    if (this.node.binding.length > 0) { return uiValueToBoolean(evaluateUiExpression(this.bindingExpression(), this.session, this.scope)); }
+    let propName: string = this.node.component === 'Checkbox' ? 'checked' : 'value';
+    return uiValueToBoolean(evaluateUiExpression(this.node.props[propName], this.session, this.scope));
+  }
   private choiceItems(): string[] { let value: UiValue = evaluateUiExpression(this.node.props['items'], this.session, this.scope); let result: string[] = []; if (value.kind === 'array') { for (let i: number = 0; i < value.arrayValue.length; i++) { result.push(uiValueToDisplayString(value.arrayValue[i])); } } return result; }
   private choiceValue(display: string): UiValue {
-    let current: UiValue = evaluateUiExpression({ kind: 'path', root: 'state', segments: this.node.binding.split('.'), operator: '', items: [], properties: [], callee: '', args: [] }, this.session, this.scope);
+    let current: UiValue = evaluateUiExpression(this.bindingExpression(), this.session, this.scope);
     if (current.kind === 'number') { let parsed: number = Number(display); return isNaN(parsed) ? stringValue(display) : numberValue(parsed); }
     if (current.kind === 'boolean') { return booleanValue(display === 'true'); }
     return stringValue(display);
@@ -165,16 +169,27 @@ export struct UiIrRenderer {
   private reportDiagnostic(message: string): void {
     if (this.reportedDiagnostics.indexOf(message) < 0) { this.reportedDiagnostics.push(message); this.onDiagnostic(message); }
   }
-  private repeatScope(item: UiValue): UiEvaluationScope { let aliases: Record<string, UiValue> = {}; aliases[this.node.itemAlias] = item; return { aliases: aliases, event: {} }; }
+  private repeatScope(item: UiValue): UiEvaluationScope {
+    let aliases: Record<string, UiValue> = {};
+    let names: string[] = Object.keys(this.scope.aliases);
+    for (let i: number = 0; i < names.length; i++) { aliases[names[i]] = this.scope.aliases[names[i]]; }
+    aliases[this.node.itemAlias] = item;
+    return { aliases: aliases, event: this.scope.event };
+  }
   private invokeFirstAction(): void {
     let action = this.node.actions['press'];
     if (action === undefined) { action = this.node.actions['submit']; }
-    if (action !== undefined) { this.onAction(action); }
+    if (action !== undefined) { this.onAction(action, this.scope); }
   }
   private invokeAction(name: string, event: Record<string, UiValue> = {}): void {
     let action = this.node.actions[name]; if (action !== undefined) { let nextScope: UiEvaluationScope = { aliases: this.scope.aliases, event: event }; this.onAction(action, nextScope); }
   }
-  private changeEvent(value: UiValue): Record<string, UiValue> { let event: Record<string, UiValue> = {}; event['value'] = value; return event; }
+  private changeEvent(value: UiValue): Record<string, UiValue> { let event: Record<string, UiValue> = {}; event['value'] = value; event['checked'] = value; return event; }
+  private updateBooleanBinding(value: UiValue): void { if (this.node.binding.length > 0) { this.onValueChange(this.node.binding, value); } }
+  private bindingExpression(): UiExpression {
+    let parts: string[] = this.node.binding.split('.');
+    return { kind: 'path', root: parts[0], segments: parts.slice(1), operator: '', items: [], properties: [], callee: '', args: [] };
+  }
   private horizontalAlign(style: ResolvedArkUiStyle): HorizontalAlign { return style.align === 'center' ? HorizontalAlign.Center : style.align === 'end' ? HorizontalAlign.End : HorizontalAlign.Start; }
   private verticalAlign(style: ResolvedArkUiStyle): VerticalAlign { return style.align === 'center' ? VerticalAlign.Center : style.align === 'end' ? VerticalAlign.Bottom : VerticalAlign.Center; }
   private flexAlign(style: ResolvedArkUiStyle): FlexAlign { return style.justify === 'center' ? FlexAlign.Center : style.justify === 'between' ? FlexAlign.SpaceBetween : style.justify === 'end' ? FlexAlign.End : FlexAlign.Start; }
