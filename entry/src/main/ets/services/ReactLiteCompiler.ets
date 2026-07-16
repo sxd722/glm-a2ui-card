@@ -178,11 +178,6 @@ function attrExpression(node: ReactLiteAstNode, name: string): ReactLiteExpressi
 function attrString(node: ReactLiteAstNode, name: string, fallback: string): string { for (let i: number = 0; i < node.attributes.length; i++) { let a = node.attributes[i]; if (a.name === name) { return a.stringValue.length > 0 ? a.stringValue : a.value === undefined ? fallback : literalText([a.value], 0); } } return fallback; }
 function attrBoolean(node: ReactLiteAstNode, name: string, fallback: boolean): boolean { for (let i: number = 0; i < node.attributes.length; i++) { let a = node.attributes[i]; if (a.name === name) { return a.booleanValue || a.stringValue === 'true' || (a.value !== undefined && a.value.value === 'true'); } } return fallback; }
 function canonicalComponent(component: string): string {
-  if (component === 'Hero') { return 'Stack'; } if (component === 'Section' || component === 'FormGroup') { return 'Column'; }
-  if (component === 'InfoCard' || component === 'StatusBanner' || component === 'EmptyState') { return 'Card'; }
-  if (component === 'MetricGrid' || component === 'MediaGallery') { return 'Grid'; }
-  if (component === 'Timeline' || component === 'ResultList') { return 'List'; }
-  if (component === 'Tabs') { return 'ChoiceChips'; } if (component === 'ActionBar') { return 'Row'; }
   return component;
 }
 function defaultClass(component: string, preset: string): string {

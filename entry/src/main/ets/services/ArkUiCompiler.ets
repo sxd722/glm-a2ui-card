@@ -8,6 +8,7 @@ import {
   CompiledArkUiSpec,
   ResolvedArkUiStyle
 } from './ArkUiTypes';
+import { isSupportedUtilityToken } from './UiStyleRegistry';
 
 const DEFAULT_COLORS: Record<string, string> = createDefaultColors();
 
@@ -105,6 +106,7 @@ function defaultStyle(): ResolvedArkUiStyle {
     shadowColor: '#00000000',
     shadowOffsetY: 0,
     widthFull: false,
+    heightFull: false,
     height: 0,
     layoutWeight: 0,
     align: 'start',
@@ -118,11 +120,13 @@ function defaultStyle(): ResolvedArkUiStyle {
 }
 
 function applyToken(style: ResolvedArkUiStyle, token: string, theme: ArkUiTheme): void {
+  if (!isSupportedUtilityToken(token)) { return; }
   if (token.length === 0 || token === 'flex' || token === 'flex-col' || token === 'flex-row' ||
     token === 'relative' || token === 'overflow-hidden') {
     return;
   }
   if (token === 'w-full') { style.widthFull = true; return; }
+  if (token === 'h-full') { style.heightFull = true; return; }
   if (token === 'flex-1') { style.layoutWeight = 1; return; }
   if (token === 'font-medium') { style.fontWeight = 'medium'; return; }
   if (token === 'font-semibold') { style.fontWeight = 'semibold'; return; }
@@ -135,6 +139,7 @@ function applyToken(style: ResolvedArkUiStyle, token: string, theme: ArkUiTheme)
   if (token === 'justify-between') { style.justify = 'between'; return; }
   if (token === 'justify-end') { style.justify = 'end'; return; }
   if (token === 'object-contain') { style.objectFit = 'contain'; return; }
+  if (token === 'object-cover') { style.objectFit = 'cover'; return; }
   if (token === 'backdrop-blur-sm') { style.blurStyle = 'thin'; return; }
   if (token === 'backdrop-blur-md') { style.blurStyle = 'regular'; return; }
   if (token === 'shadow-sm') { setShadow(style, 6, 2); return; }

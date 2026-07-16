@@ -28,8 +28,15 @@ export function evaluateUiExpression(expression: UiExpression | undefined, sessi
   return evaluateExpression(expression, session.state, session.app.computed, scope);
 }
 
-export function updateUiBinding(session: UiIrSessionState, path: string, display: string): UiIrSessionState {
-  let next: UiIrSessionState = cloneSession(session); if (safePath(path)) { setPath(next.state, path, stringValue(display)); next.stateRevision++; } return next;
+export function updateUiBinding(session: UiIrSessionState, path: string, value: UiValue): UiIrSessionState {
+  let next: UiIrSessionState = cloneSession(session);
+  if (!safePath(path)) { next.errorMessage = '拒绝不安全状态路径。'; return next; }
+  let current: UiValue | undefined = getPath(next.state, path);
+  if (current === undefined) { next.errorMessage = '绑定字段不存在：' + path; return next; }
+  if (current.kind !== 'null' && current.kind !== value.kind) {
+    next.errorMessage = '绑定字段类型不匹配：' + path; return next;
+  }
+  setPath(next.state, path, value); next.stateRevision++; return next;
 }
 
 export function reduceUiAction(session: UiIrSessionState, action: UiAction, scope: UiEvaluationScope = { aliases: {}, event: {} }): UiIrReductionResult {
@@ -60,7 +67,14 @@ export function assetDataUrl(session: UiIrSessionState, assetId: string): string
 
 function applyAction(session: UiIrSessionState, action: UiAction, scope: UiEvaluationScope): UiIrEffect | undefined {
   if (action.kind === 'action.sequence') {
-    for (let i: number = 0; i < action.steps.length; i++) { let effect = applyAction(session, action.steps[i], scope); if (effect !== undefined) { return effect; } if (session.errorMessage.length > 0) { return undefined; } }
+    for (let i: number = 0; i < action.steps.length; i++) {
+      let effect = applyAction(session, action.steps[i], scope);
+      if (effect !== undefined) {
+        if (i !== action.steps.length - 1) { session.errorMessage = 'sequence 外部 Effect 必须是最后一步。'; return undefined; }
+        return effect;
+      }
+      if (session.errorMessage.length > 0) { return undefined; }
+    }
     return undefined;
   }
   if (action.kind === 'state.set') { if (!safePath(action.path)) { session.errorMessage = '拒绝不安全状态路径。'; return undefined; } setPath(session.state, action.path, evaluateUiExpression(action.value, session, scope)); return undefined; }

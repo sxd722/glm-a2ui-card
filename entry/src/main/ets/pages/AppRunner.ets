@@ -30,7 +30,7 @@ import {
 } from '../services/NestedAgentRuntime';
 import { UiAction, UiIrSessionState, UiIrSpec, UiValue } from '../services/UiIrTypes';
 import { addUiIrAsset, activeUiIrPage, createUiIrSession, reduceUiAction, updateUiBinding } from '../services/UiIrRuntime';
-import { uiValueToDisplayString } from '../services/UiValue';
+import { uiValueFromObject, uiValueToDisplayString } from '../services/UiValue';
 import {
   readInstalledNestedAppById,
   readRunnerSession,
@@ -96,8 +96,7 @@ struct AppRunner {
 
   @Builder
   RuntimeSurface() {
-    Scroll() {
-      Column({ space: 14 }) {
+    Column({ space: 14 }) {
         Row({ space: 10 }) {
           Column({ space: 3 }) {
             Text(this.appTitle)
@@ -130,8 +129,8 @@ struct AppRunner {
             .fontSize(14).fontWeight(FontWeight.Medium).fontColor('#45534C').width('100%')
         }
 
-        if (this.nestedSession.errorMessage.length > 0) {
-          Text(this.nestedSession.errorMessage)
+        if (this.runtimeErrorText().length > 0) {
+          Text(this.runtimeErrorText())
             .fontSize(13)
             .fontColor('#9A4D4D')
             .padding(12)
@@ -140,27 +139,8 @@ struct AppRunner {
             .borderRadius(12)
         }
 
-        if (this.uiIrEnabled) {
-          UiIrRenderer({
-            node: activeUiIrPage(this.uiIrSession).root,
-            session: this.uiIrSession,
-            onAction: (action: UiAction): void => { this.runUiIrAction(action); },
-            onValueChange: (key: string, value: string): void => {
-              this.uiIrSession = updateUiBinding(this.uiIrSession, key, value);
-              this.persistRunnerState();
-            }
-          })
-        } else {
-          ArkUiNodeRenderer({
-            node: activeNestedPage(this.nestedSession).root,
-            session: this.nestedSession,
-            onAction: (current: ArkUiAction): void => { this.runNestedAction(current); },
-            onValueChange: (key: string, value: string): void => {
-              this.nestedSession = updateNestedField(this.nestedSession, key, value);
-              this.persistRunnerState();
-            }
-          })
-        }
+        if (this.uiIrEnabled) { this.RenderUiIrPage(); }
+        else { this.RenderLegacyPage(); }
 
         Button(this.showDeveloperDrawer ? '关闭开发抽屉' : '开发抽屉')
           .width('100%')
@@ -183,14 +163,83 @@ struct AppRunner {
             .fontColor('#5B675F')
             .width('100%')
         }
-      }
-      .padding(18)
-      .width('100%')
-      .backgroundColor('#FFF1F2EE')
     }
-    .scrollBar(BarState.Auto)
+    .padding(18)
     .width('100%')
     .height('100%')
+    .backgroundColor('#FFF1F2EE')
+  }
+
+  @Builder
+  RenderUiIrPage() {
+    Column() {
+      if (activeUiIrPage(this.uiIrSession).scroll) {
+        Scroll() {
+          UiIrRenderer({
+            node: activeUiIrPage(this.uiIrSession).root,
+            session: this.uiIrSession,
+            onAction: (action: UiAction): void => { this.runUiIrAction(action); },
+            onValueChange: (key: string, value: UiValue): void => {
+              this.uiIrSession = updateUiBinding(this.uiIrSession, key, value);
+              this.persistRunnerState();
+            },
+            onDiagnostic: (message: string): void => { this.statusText = message; }
+          })
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .scrollBar(BarState.Auto)
+      } else {
+        UiIrRenderer({
+          node: activeUiIrPage(this.uiIrSession).root,
+          session: this.uiIrSession,
+          onAction: (action: UiAction): void => { this.runUiIrAction(action); },
+          onValueChange: (key: string, value: UiValue): void => {
+            this.uiIrSession = updateUiBinding(this.uiIrSession, key, value);
+            this.persistRunnerState();
+          },
+          onDiagnostic: (message: string): void => { this.statusText = message; }
+        })
+      }
+    }
+    .width('100%')
+    .layoutWeight(1)
+  }
+
+  private runtimeErrorText(): string { return this.uiIrEnabled ? this.uiIrSession.errorMessage : this.nestedSession.errorMessage; }
+
+  @Builder
+  RenderLegacyPage() {
+    Column() {
+      if (activeNestedPage(this.nestedSession).scroll) {
+        Scroll() {
+          ArkUiNodeRenderer({
+            node: activeNestedPage(this.nestedSession).root,
+            session: this.nestedSession,
+            onAction: (current: ArkUiAction): void => { this.runNestedAction(current); },
+            onValueChange: (key: string, value: string): void => {
+              this.nestedSession = updateNestedField(this.nestedSession, key, value);
+              this.persistRunnerState();
+            }
+          })
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .scrollBar(BarState.Auto)
+      } else {
+        ArkUiNodeRenderer({
+          node: activeNestedPage(this.nestedSession).root,
+          session: this.nestedSession,
+          onAction: (current: ArkUiAction): void => { this.runNestedAction(current); },
+          onValueChange: (key: string, value: string): void => {
+            this.nestedSession = updateNestedField(this.nestedSession, key, value);
+            this.persistRunnerState();
+          }
+        })
+      }
+    }
+    .width('100%')
+    .layoutWeight(1)
   }
 
   private loadRunnerState(): void {
@@ -271,7 +320,7 @@ struct AppRunner {
         this.uiIrSession.agentTrace = toolResult.summary + (toolResult.details.length > 0 ? ' ' + toolResult.details.join('；') : '');
         let bindings: string[] = Object.keys(action.resultBindings);
         for (let i: number = 0; i < bindings.length; i++) {
-          this.uiIrSession = updateUiBinding(this.uiIrSession, action.resultBindings[bindings[i]], toolResult.summary);
+          this.uiIrSession = updateUiBinding(this.uiIrSession, action.resultBindings[bindings[i]], uiValueFromObject(toolResult.summary));
         }
       }
       this.statusText = '本地工具已完成：' + action.toolName;
@@ -296,7 +345,7 @@ struct AppRunner {
       let raw: string = await requestNestedRuntimeTurnFromGlm(request, { baseUrl: GLM_CODING_ENDPOINT, apiKey: GLM_LOCAL_API_KEY, model: GLM_DEFAULT_MODEL });
       let result: RuntimeAgentTurnResult = normalizeRuntimeAgentTurnResult(raw);
       for (let i: number = 0; i < result.statePatches.length; i++) {
-        this.uiIrSession = updateUiBinding(this.uiIrSession, result.statePatches[i].key, result.statePatches[i].value);
+        this.uiIrSession = updateUiBinding(this.uiIrSession, result.statePatches[i].key, uiValueFromObject(result.statePatches[i].value));
       }
       if (result.navigationPageId.length > 0) {
         this.uiIrSession.activePageId = result.navigationPageId;

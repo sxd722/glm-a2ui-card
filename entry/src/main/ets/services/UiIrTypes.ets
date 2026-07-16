@@ -37,10 +37,12 @@ export interface UiExpression {
 export type UiComponentType = 'SafeArea' | 'Scroll' | 'Column' | 'Row' | 'Stack' | 'Grid' | 'List' |
   'Card' | 'Text' | 'Image' | 'Icon' | 'Badge' | 'Progress' | 'Divider' | 'Spacer' |
   'Button' | 'IconButton' | 'TextInput' | 'TextArea' | 'Toggle' | 'Checkbox' |
-  'ChoiceChips' | 'SegmentedControl';
+  'ChoiceChips' | 'SegmentedControl' | 'Hero' | 'Section' | 'InfoCard' | 'FormGroup' |
+  'MetricGrid' | 'Timeline' | 'ResultList' | 'MediaGallery' | 'StatusBanner' | 'Tabs' |
+  'ActionBar' | 'EmptyState';
 
 export type UiActionKind = 'state.set' | 'state.toggle' | 'state.increment' | 'list.append' |
-  'list.removeWhere' | 'list.updateWhere' | 'list.toggleWhere' | 'navigation.push' |
+  'list.removeWhere' | 'list.toggleWhere' | 'navigation.push' |
   'navigation.back' | 'app.reset' | 'asset.pickLocalImage' | 'tool.invoke' |
   'agent.invoke' | 'action.sequence';
 

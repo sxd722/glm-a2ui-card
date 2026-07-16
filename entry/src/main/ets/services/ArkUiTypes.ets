@@ -109,6 +109,7 @@ export interface ResolvedArkUiStyle {
   shadowColor: string;
   shadowOffsetY: number;
   widthFull: boolean;
+  heightFull: boolean;
   height: number;
   layoutWeight: number;
   align: string;
