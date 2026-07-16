@@ -65,8 +65,8 @@ class ReactLiteScanner {
         if (this.jsxExpressionDepth > 0) { this.jsxExpressionDepth--; this.inJsxText = this.jsxExpressionDepth === 0 && this.jsxDepth > 0; }
         continue;
       }
-      if (this.scanPunctuation(ch)) { continue; }
       if (this.scanOperator(ch)) { continue; }
+      if (this.scanPunctuation(ch)) { continue; }
       if (ch === '"' || ch === "'") { this.scanString(ch); continue; }
       if (isDigit(ch)) { this.scanNumber(); continue; }
       if (isIdentifierStart(ch)) { this.scanIdentifier(); continue; }
