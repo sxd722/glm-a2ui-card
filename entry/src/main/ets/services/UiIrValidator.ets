@@ -4,8 +4,8 @@ import { isSupportedUtilityToken } from './UiStyleRegistry';
 const COMPONENTS: UiComponentType[] = ['SafeArea', 'Scroll', 'Column', 'Row', 'Stack', 'Grid', 'List', 'Card',
   'Text', 'Image', 'Icon', 'Badge', 'Progress', 'Divider', 'Spacer', 'Button', 'IconButton', 'TextInput',
   'TextArea', 'Toggle', 'Checkbox', 'ChoiceChips', 'SegmentedControl', 'Hero', 'Section', 'InfoCard', 'FormGroup',
-  'MetricGrid', 'Timeline', 'ResultList', 'MediaGallery', 'StatusBanner', 'Tabs', 'ActionBar', 'EmptyState'];
-const ACTIONS: string[] = ['state.set', 'state.toggle', 'state.increment', 'list.append', 'list.removeWhere',
+  'MetricGrid', 'Timeline', 'ResultList', 'MediaGallery', 'StatusBanner', 'Tabs', 'ActionBar', 'EmptyState', 'Sheet'];
+const ACTIONS: string[] = ['state.set', 'state.toggle', 'state.increment', 'list.append', 'list.appendWithId', 'list.updateWhere', 'list.removeWhere',
   'list.toggleWhere', 'navigation.push', 'navigation.back', 'app.reset',
   'asset.pickLocalImage', 'tool.invoke', 'agent.invoke', 'action.sequence'];
 const MAX_NODES: number = 320;
@@ -110,6 +110,14 @@ function validateAction(action: UiAction, pageIds: string[], state: Record<strin
   validateExpression(action.value, 0, diagnostics, action.id);
   validateExpression(action.toolArgs, 0, diagnostics, action.id);
   if (action.kind === 'action.sequence') { validateSequence(action, diagnostics); }
+  if ((action.kind === 'list.appendWithId' || action.kind === 'list.updateWhere') &&
+    (action.value === undefined || action.value.kind !== 'object')) {
+    diagnostics.push(error('UI1046', action.kind === 'list.appendWithId' ? 'appendWithId 需要对象值' : 'updateWhere 需要对象 patch', action.id, 'value'));
+  }
+  let idPrefix: string = action.idPrefix === undefined ? '' : action.idPrefix;
+  if (action.kind === 'list.appendWithId' && idPrefix.length === 0) {
+    diagnostics.push(error('UI1047', 'appendWithId 缺少稳定 ID 前缀', action.id, 'idPrefix'));
+  }
   for (let i: number = 0; i < action.steps.length; i++) { validateAction(action.steps[i], pageIds, state, diagnostics, toolNames, budget); }
 }
 
@@ -206,7 +214,7 @@ function validateActionPath(action: UiAction, state: Record<string, UiValue>, di
   if (target === undefined) { diagnostics.push(error('UI1037', 'Action path 不存在：' + action.path, action.id, 'path')); return; }
   if (action.kind === 'state.toggle' && target.kind !== 'boolean') { diagnostics.push(error('UI1038', 'toggle 需要 boolean path', action.id, 'path')); }
   if (action.kind === 'state.increment' && target.kind !== 'number') { diagnostics.push(error('UI1039', 'increment 需要 number path', action.id, 'path')); }
-  if (['list.append', 'list.removeWhere', 'list.toggleWhere'].indexOf(action.kind) >= 0 && target.kind !== 'array') {
+  if (['list.append', 'list.appendWithId', 'list.updateWhere', 'list.removeWhere', 'list.toggleWhere'].indexOf(action.kind) >= 0 && target.kind !== 'array') {
     diagnostics.push(error('UI1040', '列表 Action 需要 array path', action.id, 'path'));
   }
 }

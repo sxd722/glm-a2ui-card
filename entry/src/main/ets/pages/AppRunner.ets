@@ -470,7 +470,8 @@ function emptyUiIrSession(): UiIrSessionState {
 
 function restoreUiIrSession(spec: UiIrSpec, snapshot: UiIrRunnerSessionSnapshot): UiIrSessionState {
   return { app: spec, activePageId: snapshot.activePageId, routeStack: snapshot.routeStack, state: snapshot.state,
-    assets: snapshot.assets, status: snapshot.status, agentTrace: snapshot.agentTrace, errorMessage: snapshot.errorMessage, stateRevision: 0 };
+    assets: snapshot.assets, status: snapshot.status, agentTrace: snapshot.agentTrace, errorMessage: snapshot.errorMessage, stateRevision: 0,
+    computedCacheRevision: -1, computedCache: {} };
 }
 
 function uiStateStrings(state: Record<string, UiValue>): Record<string, string> {

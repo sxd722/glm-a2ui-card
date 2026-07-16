@@ -16,7 +16,8 @@ export interface UiIrReductionResult {
 
 export function createUiIrSession(spec: UiIrSpec): UiIrSessionState {
   return { app: spec, activePageId: spec.initialPageId, routeStack: [spec.initialPageId], state: cloneUiRecord(spec.initialState),
-    assets: [], status: 'idle', agentTrace: 'UI IR 已验证并载入。', errorMessage: '', stateRevision: 0 };
+    assets: [], status: 'idle', agentTrace: 'UI IR 已验证并载入。', errorMessage: '', stateRevision: 0,
+    computedCacheRevision: -1, computedCache: {} };
 }
 
 export function activeUiIrPage(session: UiIrSessionState): UiIrPage {
@@ -25,7 +26,11 @@ export function activeUiIrPage(session: UiIrSessionState): UiIrPage {
 }
 
 export function evaluateUiExpression(expression: UiExpression | undefined, session: UiIrSessionState, scope: UiEvaluationScope = { aliases: {}, event: {} }): UiValue {
-  return evaluateExpression(expression, session.state, session.app.computed, scope);
+  if (session.computedCacheRevision !== session.stateRevision) {
+    session.computedCacheRevision = session.stateRevision;
+    session.computedCache = {};
+  }
+  return evaluateExpression(expression, session.state, session.app.computed, scope, { values: session.computedCache });
 }
 
 export function updateUiBinding(session: UiIrSessionState, path: string, value: UiValue): UiIrSessionState {
@@ -81,7 +86,8 @@ function applyAction(session: UiIrSessionState, action: UiAction, scope: UiEvalu
   if (action.kind === 'state.toggle') { mutateBoolean(session, action.path); return undefined; }
   if (action.kind === 'state.increment') { let current: number = uiValueToNumber(getPath(session.state, action.path)); let amount: number = uiValueToNumber(evaluateUiExpression(action.amount, session, scope)); setPath(session.state, action.path, numberValue(current + amount)); return undefined; }
   if (action.kind === 'list.append') { let list = getPath(session.state, action.path); if (list === undefined || list.kind !== 'array') { session.errorMessage = '目标不是列表。'; return undefined; } list.arrayValue.push(evaluateUiExpression(action.value, session, scope)); return undefined; }
-  if (action.kind === 'list.removeWhere' || action.kind === 'list.toggleWhere') { return applyListAction(session, action, scope); }
+  if (action.kind === 'list.appendWithId') { applyAppendWithId(session, action, scope); return undefined; }
+  if (action.kind === 'list.updateWhere' || action.kind === 'list.removeWhere' || action.kind === 'list.toggleWhere') { return applyListAction(session, action, scope); }
   if (action.kind === 'navigation.push') { if (pageExists(session.app, action.targetPageId)) { session.routeStack.push(action.targetPageId); session.activePageId = action.targetPageId; } else { session.errorMessage = '导航目标不存在。'; } return undefined; }
   if (action.kind === 'navigation.back') { if (session.routeStack.length > 1) { session.routeStack.pop(); session.activePageId = session.routeStack[session.routeStack.length - 1]; } return undefined; }
   if (action.kind === 'app.reset') { let reset = resetUiIrSession(session); session.activePageId = reset.activePageId; session.routeStack = reset.routeStack; session.state = reset.state; session.assets = reset.assets; return undefined; }
@@ -97,11 +103,52 @@ function applyListAction(session: UiIrSessionState, action: UiAction, scope: UiE
   for (let i: number = 0; i < list.arrayValue.length; i++) {
     let item = list.arrayValue[i]; let actual = item.kind === 'object' ? item.objectValue[action.keyField] : undefined;
     if (action.kind === 'list.removeWhere' && actual !== undefined && JSON.stringify(actual) === JSON.stringify(expected)) { continue; }
+    if (action.kind === 'list.updateWhere' && actual !== undefined && JSON.stringify(actual) === JSON.stringify(expected) && item.kind === 'object') {
+      let patch = evaluateUiExpression(action.value, session, scope);
+      if (patch.kind === 'object') {
+        let copy = cloneUiValue(item);
+        let keys: string[] = Object.keys(patch.objectValue);
+        for (let j: number = 0; j < keys.length; j++) { if (keys[j] !== action.keyField) { copy.objectValue[keys[j]] = cloneUiValue(patch.objectValue[keys[j]]); } }
+        output.push(copy);
+      } else { output.push(item); }
+      continue;
+    }
     if (action.kind === 'list.toggleWhere' && actual !== undefined && JSON.stringify(actual) === JSON.stringify(expected) && item.kind === 'object') {
       let copy = JSON.parse(JSON.stringify(item)) as UiValue; let old = copy.objectValue[action.targetField]; copy.objectValue[action.targetField] = booleanValue(!uiValueToBoolean(old)); output.push(copy);
     } else { output.push(item); }
   }
   list.arrayValue = output; return undefined;
+}
+
+function applyAppendWithId(session: UiIrSessionState, action: UiAction, scope: UiEvaluationScope): void {
+  let list = getPath(session.state, action.path);
+  if (list === undefined || list.kind !== 'array') { session.errorMessage = '目标不是列表。'; return; }
+  let value = evaluateUiExpression(action.value, session, scope);
+  if (value.kind !== 'object') { session.errorMessage = 'appendWithId 需要对象值。'; return; }
+  // Older generated UI IR may omit idPrefix. Treat it as a compatibility
+  // default instead of letting malformed model output crash the runtime.
+  let configuredPrefix: string = action.idPrefix === undefined ? '' : action.idPrefix;
+  let prefix: string = configuredPrefix.length > 0 ? configuredPrefix : 'item';
+  let id: string = allocateListId(list, prefix);
+  let item = cloneUiValue(value);
+  item.objectValue['id'] = stringValue(id);
+  list.arrayValue.push(item);
+}
+
+function allocateListId(list: UiValue, prefix: string): string {
+  let next: number = 1;
+  let used: string[] = [];
+  for (let i: number = 0; i < list.arrayValue.length; i++) {
+    if (list.arrayValue[i].kind !== 'object') { continue; }
+    let idValue: UiValue | undefined = list.arrayValue[i].objectValue['id'];
+    if (idValue === undefined) { continue; }
+    let id: string = uiValueToDisplayString(idValue); used.push(id);
+    let marker: string = prefix + '-';
+    if (id.indexOf(marker) === 0) { let suffix: number = Number(id.substring(marker.length)); if (!isNaN(suffix) && suffix >= next) { next = suffix + 1; } }
+  }
+  let candidate: string = prefix + '-' + next.toString();
+  while (used.indexOf(candidate) >= 0) { next++; candidate = prefix + '-' + next.toString(); }
+  return candidate;
 }
 
 function cloneSession(session: UiIrSessionState): UiIrSessionState { return JSON.parse(JSON.stringify(session)) as UiIrSessionState; }

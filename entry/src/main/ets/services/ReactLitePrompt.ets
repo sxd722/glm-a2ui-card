@@ -10,10 +10,10 @@ export const REACT_LITE_SYSTEM_PROMPT: string =
 
 export function buildReactLitePrompt(manifest: SkillManifest, blueprint: AppBlueprint, localAssetIds: string[]): string {
   return 'Allowed components: AppShell,Page,SafeArea,Scroll,Column,Row,Stack,Grid,List,Card,Text,Image,Icon,Badge,Progress,Divider,Spacer,' +
-    'Button,IconButton,TextInput,TextArea,Toggle,Checkbox,ChoiceChips,SegmentedControl,Hero,Section,InfoCard,FormGroup,MetricGrid,Timeline,ResultList,MediaGallery,StatusBanner,Tabs,ActionBar,EmptyState,If,ForEach. ' +
-    'Allowed helpers: setState,toggleState,incrementState,appendState,removeWhere,toggleWhere,navigate,back,resetApp,pickLocalImage,invokeTool,invokeAgent,sequence. ' +
-    'ForEach keyBy is required for repeat identity. sequence may contain at most one external effect (invokeTool, invokeAgent or pickLocalImage), and that effect must be the final step. ' +
-    'Allowed intrinsic calls: filterEq,filterNotEq,filterContains,slice,length,includes,coalesce,formatNumber,formatCurrency,join. ' +
+  'Button,IconButton,TextInput,TextArea,Toggle,Checkbox,ChoiceChips,SegmentedControl,Hero,Section,InfoCard,FormGroup,MetricGrid,Timeline,ResultList,MediaGallery,StatusBanner,Tabs,ActionBar,EmptyState,Sheet,If,ForEach. ' +
+    'Allowed helpers: setState,toggleState,incrementState,appendState,appendWithId,updateWhere,removeWhere,toggleWhere,navigate,back,resetApp,pickLocalImage,invokeTool,invokeAgent,sequence. Never create random IDs or use appendState for object lists with identity; use appendWithId so Runtime assigns the ID. ' +
+    'Events: onPress,onSubmit,onDismiss,onSelect,onReachEnd,onLongPress. ForEach keyBy is required for repeat identity. sequence may contain at most one external effect (invokeTool, invokeAgent or pickLocalImage), and that effect must be the final step. ' +
+    'Allowed intrinsic calls: filterEq,filterNotEq,filterContains,slice,length,includes,coalesce,formatNumber,formatCurrency,join,sumBy,countWhere,sortBy,formatDate. ' +
     'Allowed style tokens: p-4,p-6,px-4,py-3,gap-2,gap-3,gap-4,w-full,h-full,flex-1,items-center,justify-between,bg-surface,bg-card,bg-primary,text-ink,text-muted,text-white,border,border-border,rounded-lg,rounded-xl,rounded-2xl,shadow-sm,shadow-md,shadow-lg,backdrop-blur-sm,object-cover. ' +
     'SkillManifest=' + JSON.stringify(manifest) + '\nAppBlueprint=' + JSON.stringify(blueprint) +
     '\nPageIds=' + JSON.stringify(blueprint.pages.map((page) => page.id)) + '\nImplementedTools=' + JSON.stringify(manifest.toolContracts.filter((tool) => tool.implemented).map((tool) => tool.name)) +

@@ -33,7 +33,8 @@ export struct UiIrRenderer {
       Column({ space: this.style().gap }) { this.RenderChildren(); }
         .width(this.style().widthFull ? '100%' : undefined).padding({ top: this.style().paddingTop, right: this.style().paddingRight, bottom: this.style().paddingBottom, left: this.style().paddingLeft })
         .backgroundColor(this.style().backgroundColor).borderRadius(this.style().borderRadius).shadow({ radius: this.style().shadowRadius, color: this.style().shadowColor, offsetX: 0, offsetY: this.style().shadowOffsetY })
-        .alignItems(this.horizontalAlign(this.style())).justifyContent(this.flexAlign(this.style())).layoutWeight(this.style().layoutWeight);
+        .alignItems(this.horizontalAlign(this.style())).justifyContent(this.flexAlign(this.style()))
+        .height(this.style().heightFull ? '100%' : undefined).layoutWeight(this.style().layoutWeight);
     } else if (this.node.component === 'Row' || this.node.component === 'ActionBar') {
       Row({ space: this.style().gap }) { this.RenderChildren(); }
         .width(this.style().widthFull ? '100%' : undefined).padding({ top: this.style().paddingTop, right: this.style().paddingRight, bottom: this.style().paddingBottom, left: this.style().paddingLeft })
@@ -44,11 +45,12 @@ export struct UiIrRenderer {
         .backgroundColor(this.style().backgroundColor).shadow({ radius: this.style().shadowRadius, color: this.style().shadowColor, offsetX: 0, offsetY: this.style().shadowOffsetY });
     } else if (this.node.component === 'Scroll') {
       Scroll() { Column({ space: this.style().gap }) { this.RenderChildren(); } }
-        .width('100%').height('100%').scrollBar(BarState.Auto);
+        .width('100%').height('100%').layoutWeight(this.style().layoutWeight).scrollBar(BarState.Auto);
     } else if (this.node.component === 'List' || this.node.component === 'Timeline' || this.node.component === 'ResultList') {
       List({ space: this.style().gap }) {
         ForEach(this.node.children, (child: UiIrNode) => { ListItem() { UiIrRenderer({ node: child, session: this.session, scope: this.scope, onAction: this.onAction, onValueChange: this.onValueChange, onDiagnostic: this.onDiagnostic }); } }, (child: UiIrNode) => child.id)
-      }.width('100%').height(this.style().height > 0 ? this.style().height : 240).layoutWeight(this.style().layoutWeight).scrollBar(BarState.Auto);
+      }.width('100%').height(this.style().height > 0 ? this.style().height : 240).layoutWeight(this.style().layoutWeight).scrollBar(BarState.Auto)
+        .onReachEnd(() => { this.invokeAction('reachEnd'); });
     } else if (this.node.component === 'Grid' || this.node.component === 'MetricGrid' || this.node.component === 'MediaGallery') {
       Grid() {
         ForEach(this.node.children, (child: UiIrNode) => { GridItem() { UiIrRenderer({ node: child, session: this.session, scope: this.scope, onAction: this.onAction, onValueChange: this.onValueChange, onDiagnostic: this.onDiagnostic }); } }, (child: UiIrNode) => child.id)
@@ -66,20 +68,32 @@ export struct UiIrRenderer {
       if (this.node.component === 'TextInput') {
         TextInput({ text: this.boundText(), placeholder: this.propText('placeholder') }).width('100%').height(46).padding(12)
             .fontColor(this.style().foregroundColor).backgroundColor(this.style().backgroundColor).borderRadius(this.style().borderRadius)
-          .onChange((value: string) => { this.onValueChange(this.node.binding, stringValue(value)); });
+          .onChange((value: string) => { this.onValueChange(this.node.binding, stringValue(value)); })
+          .onSubmit(() => { this.invokeAction('submit'); });
       } else {
         TextArea({ text: this.boundText(), placeholder: this.propText('placeholder') }).width('100%').height(110).padding(12)
           .fontColor(this.style().foregroundColor).backgroundColor(this.style().backgroundColor).borderRadius(this.style().borderRadius)
-          .onChange((value: string) => { this.onValueChange(this.node.binding, stringValue(value)); });
+          .onChange((value: string) => { this.onValueChange(this.node.binding, stringValue(value)); })
+          .onSubmit(() => { this.invokeAction('submit'); });
       }
     } else if (this.node.component === 'Toggle' || this.node.component === 'Checkbox') {
       Row({ space: 10 }) {
-        if (this.node.component === 'Toggle') { Toggle({ type: ToggleType.Switch, isOn: this.boundBoolean() }).onChange((value: boolean) => { this.onValueChange(this.node.binding, booleanValue(value)); }); }
-        else { Checkbox({ name: this.node.id, group: 'ui-ir' }).select(this.boundBoolean()).onChange((value: boolean) => { this.onValueChange(this.node.binding, booleanValue(value)); }); }
+        if (this.node.component === 'Toggle') { Toggle({ type: ToggleType.Switch, isOn: this.boundBoolean() }).onChange((value: boolean) => { this.onValueChange(this.node.binding, booleanValue(value)); this.invokeAction('select'); }); }
+        else { Checkbox({ name: this.node.id, group: 'ui-ir' }).select(this.boundBoolean()).onChange((value: boolean) => { this.onValueChange(this.node.binding, booleanValue(value)); this.invokeAction('select'); }); }
         Text(this.propText('label')).fontSize(this.style().fontSize).fontColor(this.style().foregroundColor);
       }.width('100%').alignItems(VerticalAlign.Center);
     } else if (this.node.component === 'ChoiceChips' || this.node.component === 'SegmentedControl' || this.node.component === 'Tabs') {
-      Row({ space: 8 }) { ForEach(this.choiceItems(), (item: string) => { Button(item).height(36).padding({ left: 12, right: 12 }).backgroundColor(item === this.boundText() ? this.style().foregroundColor : this.style().backgroundColor).fontColor(item === this.boundText() ? this.style().backgroundColor : this.style().foregroundColor).borderRadius(this.style().borderRadius).onClick(() => { this.onValueChange(this.node.binding, this.choiceValue(item)); }); }, (item: string) => item); }.width('100%');
+      Scroll() { Row({ space: 8 }) { ForEach(this.choiceItems(), (item: string) => { Button(item).height(36).padding({ left: 12, right: 12 }).backgroundColor(item === this.boundText() ? this.style().foregroundColor : this.style().backgroundColor).fontColor(item === this.boundText() ? this.style().backgroundColor : this.style().foregroundColor).borderRadius(this.style().borderRadius).onClick(() => { this.onValueChange(this.node.binding, this.choiceValue(item)); this.invokeAction('select'); }); }, (item: string) => item); }.width('max-content'); }
+        .width('100%').height(48).scrollable(ScrollDirection.Horizontal).scrollBar(BarState.Off);
+    } else if (this.node.component === 'Sheet') {
+      Stack({ alignContent: Alignment.Bottom }) {
+        Column() { Blank().width('100%').height('100%').backgroundColor('#66000000'); }
+          .width('100%').height('100%').onClick(() => { this.invokeAction('dismiss'); });
+        Column({ space: this.style().gap }) { this.RenderChildren(); }
+          .width('100%').padding({ top: this.style().paddingTop, right: this.style().paddingRight, bottom: this.style().paddingBottom, left: this.style().paddingLeft })
+          .backgroundColor(this.style().backgroundColor).borderRadius(this.style().borderRadius)
+          .shadow({ radius: this.style().shadowRadius, color: this.style().shadowColor, offsetX: 0, offsetY: this.style().shadowOffsetY });
+      }.width('100%').height('100%');
     } else if (this.node.component === 'Progress') {
       Progress({ value: Number(this.propText('value')) }).width('100%').color(this.style().foregroundColor).backgroundColor(this.style().backgroundColor);
     } else if (this.node.component === 'Divider') {
@@ -152,7 +166,12 @@ export struct UiIrRenderer {
     if (this.reportedDiagnostics.indexOf(message) < 0) { this.reportedDiagnostics.push(message); this.onDiagnostic(message); }
   }
   private repeatScope(item: UiValue): UiEvaluationScope { let aliases: Record<string, UiValue> = {}; aliases[this.node.itemAlias] = item; return { aliases: aliases, event: {} }; }
-  private invokeFirstAction(): void { let action = this.node.actions['press']; if (action !== undefined) { this.onAction(action); } }
+  private invokeFirstAction(): void {
+    let action = this.node.actions['press'];
+    if (action === undefined) { action = this.node.actions['submit']; }
+    if (action !== undefined) { this.onAction(action); }
+  }
+  private invokeAction(name: string): void { let action = this.node.actions[name]; if (action !== undefined) { this.onAction(action); } }
   private horizontalAlign(style: ResolvedArkUiStyle): HorizontalAlign { return style.align === 'center' ? HorizontalAlign.Center : style.align === 'end' ? HorizontalAlign.End : HorizontalAlign.Start; }
   private verticalAlign(style: ResolvedArkUiStyle): VerticalAlign { return style.align === 'center' ? VerticalAlign.Center : style.align === 'end' ? VerticalAlign.Bottom : VerticalAlign.Center; }
   private flexAlign(style: ResolvedArkUiStyle): FlexAlign { return style.justify === 'center' ? FlexAlign.Center : style.justify === 'between' ? FlexAlign.SpaceBetween : style.justify === 'end' ? FlexAlign.End : FlexAlign.Start; }

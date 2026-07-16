@@ -85,7 +85,9 @@ function compileNode(node: ReactLiteAstNode, preset: string): UiIrNode {
   let attributes: ReactLiteAstAttribute[] = node.attributes;
   for (let i: number = 0; i < attributes.length; i++) {
     let attribute: ReactLiteAstAttribute = attributes[i];
-    if (attribute.name === 'onPress' && attribute.value !== undefined) { actions['press'] = compileAction(attribute.value, node.line, node.column); }
+    if (attribute.value !== undefined && ['onPress', 'onSubmit', 'onDismiss', 'onSelect', 'onReachEnd', 'onLongPress'].indexOf(attribute.name) >= 0) {
+      actions[eventName(attribute.name)] = compileAction(attribute.value, node.line, node.column);
+    }
   }
   let children: UiIrNode[] = compileChildren(node.children, preset);
   return elementNode('node-' + node.line.toString() + '-' + node.column.toString(), component, propsFrom(node), className,
@@ -106,7 +108,9 @@ function propsFrom(node: ReactLiteAstNode): Record<string, UiExpression> {
   let props: Record<string, UiExpression> = {};
   for (let i: number = 0; i < node.attributes.length; i++) {
     let item: ReactLiteAstAttribute = node.attributes[i];
-    if (item.name === 'className' || item.name === 'bind' || item.name === 'onPress' || item.name === 'item' || item.name === 'keyBy') { continue; }
+    if (item.name === 'className' || item.name === 'bind' || item.name === 'onPress' || item.name === 'onSubmit' ||
+      item.name === 'onDismiss' || item.name === 'onSelect' || item.name === 'onReachEnd' || item.name === 'onLongPress' ||
+      item.name === 'item' || item.name === 'keyBy') { continue; }
     if (item.value !== undefined) { props[item.name] = compileExpression(item.value); }
     else if (item.booleanValue) { props[item.name] = literal(booleanValue(true)); }
     else if (item.stringValue.length > 0) { props[item.name] = literal(stringValue(item.stringValue)); }
@@ -117,7 +121,7 @@ function propsFrom(node: ReactLiteAstNode): Record<string, UiExpression> {
 function compileAction(expression: ReactLiteExpression, line: number, column: number): UiAction {
   let kind: UiActionKind = 'state.set'; let args: ReactLiteExpression[] = expression.args;
   let action: UiAction = { id: 'action-' + line.toString() + '-' + column.toString(), kind: kind, targetPageId: '', path: '', keyField: '',
-    targetField: '', toolName: '', toolArgs: literal(nullValue()), resultBindings: {}, intent: '', assetSlotId: '', steps: [] };
+    targetField: '', idPrefix: '', toolName: '', toolArgs: literal(nullValue()), resultBindings: {}, intent: '', assetSlotId: '', steps: [] };
   if (expression.kind !== 'call') { return action; }
   let name: string = expression.callee;
   if (name === 'navigate') { action.kind = 'navigation.push'; action.targetPageId = literalText(args, 0); }
@@ -127,6 +131,8 @@ function compileAction(expression: ReactLiteExpression, line: number, column: nu
   else if (name === 'incrementState') { action.kind = 'state.increment'; action.path = literalText(args, 0); action.amount = args[1] === undefined ? literal(numberValue(1)) : compileExpression(args[1]); }
   else if (name === 'setState') { action.kind = 'state.set'; action.path = literalText(args, 0); action.value = args[1] === undefined ? literal(nullValue()) : compileExpression(args[1]); }
   else if (name === 'appendState') { action.kind = 'list.append'; action.path = literalText(args, 0); action.value = args[1] === undefined ? literal(nullValue()) : compileExpression(args[1]); }
+  else if (name === 'appendWithId') { action.kind = 'list.appendWithId'; action.path = literalText(args, 0); action.idPrefix = literalText(args, 1); action.keyField = 'id'; action.value = args[2] === undefined ? literal(nullValue()) : compileExpression(args[2]); }
+  else if (name === 'updateWhere') { action.kind = 'list.updateWhere'; action.path = literalText(args, 0); action.keyField = literalText(args, 1); action.keyValue = args[2] === undefined ? literal(nullValue()) : compileExpression(args[2]); action.value = args[3] === undefined ? literal(nullValue()) : compileExpression(args[3]); }
   else if (name === 'removeWhere') { action.kind = 'list.removeWhere'; action.path = literalText(args, 0); action.keyField = literalText(args, 1); action.keyValue = args[2] === undefined ? literal(nullValue()) : compileExpression(args[2]); }
   else if (name === 'toggleWhere') { action.kind = 'list.toggleWhere'; action.path = literalText(args, 0); action.keyField = literalText(args, 1); action.keyValue = args[2] === undefined ? literal(nullValue()) : compileExpression(args[2]); action.targetField = literalText(args, 3); }
   else if (name === 'pickLocalImage') { action.kind = 'asset.pickLocalImage'; action.assetSlotId = literalText(args, 0); }
@@ -180,6 +186,14 @@ function attrBoolean(node: ReactLiteAstNode, name: string, fallback: boolean): b
 function canonicalComponent(component: string): string {
   return component;
 }
+function eventName(attribute: string): string {
+  if (attribute === 'onPress') { return 'press'; }
+  if (attribute === 'onSubmit') { return 'submit'; }
+  if (attribute === 'onDismiss') { return 'dismiss'; }
+  if (attribute === 'onSelect') { return 'select'; }
+  if (attribute === 'onReachEnd') { return 'reachEnd'; }
+  return 'longPress';
+}
 function defaultClass(component: string, preset: string): string {
   if (component === 'Page') { return 'w-full gap-4 p-4 bg-surface'; }
   if (component === 'Hero') { return 'w-full h-32 rounded-2xl bg-primary shadow-lg'; }
@@ -187,6 +201,7 @@ function defaultClass(component: string, preset: string): string {
   if (component === 'Button' || component === 'ActionBar') { return 'w-full gap-3 p-3 bg-primary text-white rounded-xl'; }
   if (component === 'TextInput' || component === 'TextArea') { return 'w-full p-3 bg-card rounded-lg border border-border'; }
   if (component === 'MetricGrid') { return 'w-full gap-3'; }
+  if (component === 'Sheet') { return 'w-full p-4 bg-card rounded-2xl shadow-lg'; }
   if (component === 'Image') { return 'w-full h-32 object-cover rounded-xl'; }
   return preset === 'result' ? 'w-full gap-3' : 'w-full gap-2';
 }

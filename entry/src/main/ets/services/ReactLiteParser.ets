@@ -5,7 +5,7 @@ import { ReactLiteAst, ReactLiteAstAttribute, ReactLiteAstNode, ReactLiteDiagnos
 const COMPONENTS: string[] = ['AppShell', 'Page', 'SafeArea', 'Scroll', 'Column', 'Row', 'Stack', 'Grid', 'List',
   'Card', 'Text', 'Image', 'Icon', 'Badge', 'Progress', 'Divider', 'Spacer', 'Button', 'IconButton', 'TextInput',
   'TextArea', 'Toggle', 'Checkbox', 'ChoiceChips', 'SegmentedControl', 'Hero', 'Section', 'InfoCard', 'FormGroup',
-  'MetricGrid', 'Timeline', 'ResultList', 'MediaGallery', 'StatusBanner', 'Tabs', 'ActionBar', 'EmptyState', 'If', 'ForEach'];
+  'MetricGrid', 'Timeline', 'ResultList', 'MediaGallery', 'StatusBanner', 'Tabs', 'ActionBar', 'EmptyState', 'Sheet', 'If', 'ForEach'];
 const PRECEDENCE: Record<string, number> = { '??': 1, '||': 2, '&&': 3, '===': 4, '!==': 4, '==': 4, '!=': 4,
   '<': 5, '<=': 5, '>': 5, '>=': 5, '+': 6, '-': 6, '*': 7, '/': 7, '%': 7 };
 

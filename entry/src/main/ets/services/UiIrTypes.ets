@@ -39,10 +39,10 @@ export type UiComponentType = 'SafeArea' | 'Scroll' | 'Column' | 'Row' | 'Stack'
   'Button' | 'IconButton' | 'TextInput' | 'TextArea' | 'Toggle' | 'Checkbox' |
   'ChoiceChips' | 'SegmentedControl' | 'Hero' | 'Section' | 'InfoCard' | 'FormGroup' |
   'MetricGrid' | 'Timeline' | 'ResultList' | 'MediaGallery' | 'StatusBanner' | 'Tabs' |
-  'ActionBar' | 'EmptyState';
+  'ActionBar' | 'EmptyState' | 'Sheet';
 
 export type UiActionKind = 'state.set' | 'state.toggle' | 'state.increment' | 'list.append' |
-  'list.removeWhere' | 'list.toggleWhere' | 'navigation.push' |
+  'list.appendWithId' | 'list.updateWhere' | 'list.removeWhere' | 'list.toggleWhere' | 'navigation.push' |
   'navigation.back' | 'app.reset' | 'asset.pickLocalImage' | 'tool.invoke' |
   'agent.invoke' | 'action.sequence';
 
@@ -54,6 +54,7 @@ export interface UiAction {
   keyField: string;
   keyValue?: UiExpression;
   targetField: string;
+  idPrefix: string;
   amount?: UiExpression;
   value?: UiExpression;
   toolName: string;
@@ -126,6 +127,8 @@ export interface UiIrSessionState {
   agentTrace: string;
   errorMessage: string;
   stateRevision: number;
+  computedCacheRevision: number;
+  computedCache: Record<string, UiValue>;
 }
 
 export interface LocalImageAssetRef {

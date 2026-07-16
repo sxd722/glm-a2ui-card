@@ -36,7 +36,7 @@ function convertNode(node: ArkUiNode): UiIrNode {
 
 function convertAction(action: ArkUiAction): UiAction {
   let result: UiAction = { id: action.id, kind: 'state.set', targetPageId: action.targetPageId, path: '', keyField: '',
-    targetField: '', toolName: '', toolArgs: literalText(action.payload), resultBindings: {}, intent: action.label,
+    targetField: '', idPrefix: '', toolName: '', toolArgs: literalText(action.payload), resultBindings: {}, intent: action.label,
     assetSlotId: '', steps: [] };
   if (action.kind === 'navigate') { result.kind = 'navigation.push'; }
   else if (action.kind === 'back') { result.kind = 'navigation.back'; }
