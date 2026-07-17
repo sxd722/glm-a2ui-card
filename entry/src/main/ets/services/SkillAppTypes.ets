@@ -202,7 +202,8 @@ export interface RuntimeUiPatch {
   items: string[];
 }
 
-export interface RuntimeAgentTurnRequest {
+export interface LegacyRuntimeAgentTurnRequest {
+  mode: 'legacy';
   turnId: string;
   appId: string;
   skillId: string;
@@ -213,17 +214,27 @@ export interface RuntimeAgentTurnRequest {
   availableTools: ToolContract[];
   dynamicSlotIds: string[];
   toolResults: RuntimeToolResult[];
-  uiIrAction?: UiIrAgentActionPayload;
-  uiIrState?: Record<string, Object>;
 }
 
 export interface UiIrAgentActionPayload {
   intent: string;
   args: Object;
   expectedOutputs: string[];
-  outputBindings: Record<string, string>;
   outputKinds: Record<string, UiValueKind>;
 }
+
+export interface UiIrRuntimeAgentTurnRequest {
+  mode: 'ui-ir';
+  turnId: string;
+  appId: string;
+  skillId: string;
+  currentPageId: string;
+  actionId: string;
+  action: UiIrAgentActionPayload;
+  availableTools: ToolContract[];
+}
+
+export type RuntimeAgentTurnRequest = LegacyRuntimeAgentTurnRequest | UiIrRuntimeAgentTurnRequest;
 
 export interface RuntimeAgentTurnResult {
   turnId: string;

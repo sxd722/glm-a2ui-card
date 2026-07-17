@@ -1,5 +1,6 @@
 import { Want } from '@kit.AbilityKit';
 import { util } from '@kit.ArkTS';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 
 export const HDC_DEBUG_EVENT: string = 'HdcDebugCommandAvailable';
 const MAX_PAYLOAD_LENGTH: number = 64 * 1024;
@@ -147,6 +148,7 @@ export function takeNextHdcDebugCommand(scope: HdcDebugScope = 'any'): HdcDebugC
 
 export function recordHdcDebugResult(result: HdcDebugResult): void {
   results.push(result);
+  hilog.info(0x0000, 'HdcDebug', 'HDC_DEBUG_RESULT %{public}s', JSON.stringify(result));
   if (results.length > MAX_RESULT_LENGTH) {
     results.shift();
   }
@@ -229,7 +231,7 @@ function isHdcDebugAction(value: string): boolean {
     value === 'resetForgeImageTransfer' || value === 'appendForgeImageChunk' ||
     value === 'finishForgeImageTransfer' || value === 'exportForgeArtifacts' || value === 'exportCurrentArtifacts' ||
     value === 'loadTravelDemo' || value === 'loadReactLiteDemo' || value === 'compileReactLiteSource' ||
-    value === 'runReactLiteSelfTest' || value === 'resetWorkbench';
+    value === 'runReactLiteSelfTest' || value === 'runTravelReactLiteAcceptance' || value === 'resetWorkbench';
 }
 
 function debugScope(action: HdcDebugAction): HdcDebugScope {

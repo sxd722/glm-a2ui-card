@@ -3,6 +3,7 @@ import { arrayValue, booleanValue, nullValue, numberValue, objectValue, stringVa
 import { UiAction, UiActionKind, UiComponentType, UiComputedDefinition, UiExpression, UiIrNode, UiIrPage, UiIrSpec, UiIrTheme,
   UiValue } from './UiIrTypes';
 import { validateUiIrSpec } from './UiIrValidator';
+import { runReactLiteQualityGate } from './ReactLiteQualityGate';
 import { parseReactLite } from './ReactLiteParser';
 import { ReactLiteAstAttribute, ReactLiteAstNode, ReactLiteExpression, ReactLiteDiagnostic } from './ReactLiteTypes';
 
@@ -57,7 +58,9 @@ export function compileReactLite(source: string, context: ReactLiteCompileContex
   let validation = validateUiIrSpec(spec, toolNames, context.localAssetIds);
   let uiDiagnostics: string[] = [];
   for (let i: number = 0; i < validation.diagnostics.length; i++) { uiDiagnostics.push(validation.diagnostics[i].message); }
-  return { ok: validation.ok, value: validation.ok ? spec : undefined, diagnostics: parsed.diagnostics, uiDiagnostics: uiDiagnostics };
+  if (validation.ok) { uiDiagnostics = uiDiagnostics.concat(runReactLiteQualityGate(spec)); }
+  return { ok: validation.ok && uiDiagnostics.length === 0, value: validation.ok && uiDiagnostics.length === 0 ? spec : undefined,
+    diagnostics: parsed.diagnostics, uiDiagnostics: uiDiagnostics };
 }
 
 function compilePage(page: ReactLiteAstNode, context: ReactLiteCompileContext, diagnostics: ReactLiteDiagnostic[]): UiIrPage {

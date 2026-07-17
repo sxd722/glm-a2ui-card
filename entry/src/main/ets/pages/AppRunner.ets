@@ -31,7 +31,7 @@ import {
 } from '../services/NestedAgentRuntime';
 import { UiAction, UiEvaluationScope, UiIrNode, UiIrSessionState, UiIrSpec, UiValue, UiValueKind } from '../services/UiIrTypes';
 import { addUiIrAsset, activeUiIrPage, createUiIrSession, evaluateUiExpression, reduceUiAction, updateUiBinding } from '../services/UiIrRuntime';
-import { stringValue as uiStringValue, uiValueFromObject, uiValueToDisplayString, uiValueToPlainObject, uiRecordToPlainObject } from '../services/UiValue';
+import { stringValue as uiStringValue, uiValueFromObject, uiValueToDisplayString, uiValueToPlainObject } from '../services/UiValue';
 import {
   readInstalledNestedAppById,
   readRunnerSession,
@@ -347,13 +347,11 @@ struct AppRunner {
       }
       let plainArgs: Object = uiValueToPlainObject(reduced.effect.args);
       let uiIrAction: UiIrAgentActionPayload = { intent: action.intent, args: plainArgs,
-        expectedOutputs: expectedOutputs, outputBindings: action.resultBindings, outputKinds: outputKinds };
+        expectedOutputs: expectedOutputs, outputKinds: outputKinds };
       let request: RuntimeAgentTurnRequest = {
-        turnId: 'turn-' + Date.now().toString(), appId: this.appId, skillId: this.manifest.skillId,
-        currentPageId: this.uiIrSession.activePageId, actionId: action.id, actionPayload: JSON.stringify(uiIrAction),
-        state: uiStateStrings(this.uiIrSession.state), availableTools: this.manifest.toolContracts.filter((tool) => tool.implemented),
-        dynamicSlotIds: [], toolResults: [], uiIrAction: uiIrAction,
-        uiIrState: uiRecordToPlainObject(this.uiIrSession.state)
+        mode: 'ui-ir', turnId: 'turn-' + Date.now().toString(), appId: this.appId, skillId: this.manifest.skillId,
+        currentPageId: this.uiIrSession.activePageId, actionId: action.id, action: uiIrAction,
+        availableTools: this.manifest.toolContracts.filter((tool) => tool.implemented)
       };
       let raw: string = await requestNestedRuntimeTurnFromGlm(request, { baseUrl: GLM_CODING_ENDPOINT, apiKey: GLM_LOCAL_API_KEY, model: GLM_DEFAULT_MODEL });
       let result: RuntimeAgentTurnResult = normalizeUiIrAgentTurnResult(raw, expectedOutputs, outputKinds);
@@ -544,13 +542,6 @@ function restoreUiIrSession(spec: UiIrSpec, snapshot: UiIrRunnerSessionSnapshot)
   return { app: spec, activePageId: snapshot.activePageId, routeStack: snapshot.routeStack, state: snapshot.state,
     assets: snapshot.assets, status: snapshot.status, agentTrace: snapshot.agentTrace, errorMessage: snapshot.errorMessage, stateRevision: 0,
     computedCacheRevision: -1, computedCache: {} };
-}
-
-function uiStateStrings(state: Record<string, UiValue>): Record<string, string> {
-  let result: Record<string, string> = {};
-  let keys: string[] = Object.keys(state);
-  for (let i: number = 0; i < keys.length; i++) { result[keys[i]] = uiValueToDisplayString(state[keys[i]]); }
-  return result;
 }
 
 function uiTravelInputs(state: Record<string, UiValue>): TravelInputs {

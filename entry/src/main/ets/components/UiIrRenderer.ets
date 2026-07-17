@@ -9,6 +9,7 @@ export struct UiIrRenderer {
   @Prop node: UiIrNode;
   @Prop session: UiIrSessionState;
   @Prop scope: UiEvaluationScope = { aliases: {}, event: {} };
+  @Prop instanceKey: string = '';
   onAction: (action: UiAction, scope?: UiEvaluationScope) => void = (_action: UiAction, _scope?: UiEvaluationScope): void => {};
   onValueChange: (path: string, value: UiValue) => void = (_path: string, _value: UiValue): void => {};
   onDiagnostic: (message: string) => void = (_message: string): void => {};
@@ -48,12 +49,12 @@ export struct UiIrRenderer {
         .width('100%').height('100%').layoutWeight(this.style().layoutWeight).scrollBar(BarState.Auto);
     } else if (this.node.component === 'List' || this.node.component === 'Timeline' || this.node.component === 'ResultList') {
       List({ space: this.style().gap }) {
-        ForEach(this.node.children, (child: UiIrNode) => { ListItem() { UiIrRenderer({ node: child, session: this.session, scope: this.scope, onAction: this.onAction, onValueChange: this.onValueChange, onDiagnostic: this.onDiagnostic }); } }, (child: UiIrNode) => child.id)
+        ForEach(this.node.children, (child: UiIrNode) => { ListItem() { UiIrRenderer({ node: child, session: this.session, scope: this.scope, instanceKey: this.instanceKey, onAction: this.onAction, onValueChange: this.onValueChange, onDiagnostic: this.onDiagnostic }); } }, (child: UiIrNode) => child.id)
       }.width('100%').height(this.style().height > 0 ? this.style().height : 240).layoutWeight(this.style().layoutWeight).scrollBar(BarState.Auto)
         .onReachEnd(() => { this.invokeAction('reachEnd'); });
     } else if (this.node.component === 'Grid' || this.node.component === 'MetricGrid' || this.node.component === 'MediaGallery') {
       Grid() {
-        ForEach(this.node.children, (child: UiIrNode) => { GridItem() { UiIrRenderer({ node: child, session: this.session, scope: this.scope, onAction: this.onAction, onValueChange: this.onValueChange, onDiagnostic: this.onDiagnostic }); } }, (child: UiIrNode) => child.id)
+        ForEach(this.node.children, (child: UiIrNode) => { GridItem() { UiIrRenderer({ node: child, session: this.session, scope: this.scope, instanceKey: this.instanceKey, onAction: this.onAction, onValueChange: this.onValueChange, onDiagnostic: this.onDiagnostic }); } }, (child: UiIrNode) => child.id)
       }.columnsTemplate(this.gridColumns()).rowsGap(this.style().gap).columnsGap(this.style().gap).width('100%');
     } else if (this.node.component === 'Text' || this.node.component === 'Badge' || this.node.component === 'Icon') {
       Text(this.propText('text')).fontSize(this.style().fontSize).fontWeight(this.fontWeight(this.style())).fontColor(this.style().foregroundColor)
@@ -79,7 +80,7 @@ export struct UiIrRenderer {
     } else if (this.node.component === 'Toggle' || this.node.component === 'Checkbox') {
       Row({ space: 10 }) {
         if (this.node.component === 'Toggle') { Toggle({ type: ToggleType.Switch, isOn: this.boundBoolean() }).onChange((value: boolean) => { let nextValue = booleanValue(value); this.updateBooleanBinding(nextValue); this.invokeAction('change', this.changeEvent(nextValue)); }); }
-        else { Checkbox({ name: this.node.id, group: 'ui-ir' }).select(this.boundBoolean()).onChange((value: boolean) => { let nextValue = booleanValue(value); this.updateBooleanBinding(nextValue); this.invokeAction('change', this.changeEvent(nextValue)); }); }
+        else { Checkbox({ name: this.checkboxInstanceName(), group: 'ui-ir' }).select(this.boundBoolean()).onChange((value: boolean) => { let nextValue = booleanValue(value); this.updateBooleanBinding(nextValue); this.invokeAction('change', this.changeEvent(nextValue)); }); }
         Text(this.propText('label')).fontSize(this.style().fontSize).fontColor(this.style().foregroundColor);
       }.width('100%').alignItems(VerticalAlign.Center);
     } else if (this.node.component === 'ChoiceChips' || this.node.component === 'SegmentedControl' || this.node.component === 'Tabs') {
@@ -104,7 +105,7 @@ export struct UiIrRenderer {
   }
 
   @Builder
-  RenderChildren() { ForEach(this.node.children, (child: UiIrNode) => { UiIrRenderer({ node: child, session: this.session, scope: this.scope, onAction: this.onAction, onValueChange: this.onValueChange, onDiagnostic: this.onDiagnostic }); }, (child: UiIrNode) => child.id); }
+  RenderChildren() { ForEach(this.node.children, (child: UiIrNode) => { UiIrRenderer({ node: child, session: this.session, scope: this.scope, instanceKey: this.instanceKey, onAction: this.onAction, onValueChange: this.onValueChange, onDiagnostic: this.onDiagnostic }); }, (child: UiIrNode) => child.id); }
 
   @Builder
   RenderRepeat() {
@@ -113,7 +114,7 @@ export struct UiIrRenderer {
 
   @Builder
   RenderRepeatedItem(item: UiValue, index: number) {
-    Column() { ForEach(this.node.children, (child: UiIrNode) => { UiIrRenderer({ node: child, session: this.session, scope: this.repeatScope(item), onAction: this.onAction, onValueChange: this.onValueChange, onDiagnostic: this.onDiagnostic }); }, (child: UiIrNode) => child.id + '-' + this.repeatKey(item, index)); }
+    Column() { ForEach(this.node.children, (child: UiIrNode) => { UiIrRenderer({ node: child, session: this.session, scope: this.repeatScope(item), instanceKey: this.instanceKey + '-' + this.repeatStableKey(item, index), onAction: this.onAction, onValueChange: this.onValueChange, onDiagnostic: this.onDiagnostic }); }, (child: UiIrNode) => child.id + '-' + this.repeatKey(item, index)); }
   }
 
   private style(): ResolvedArkUiStyle { let theme: ArkUiTheme = { colors: this.session.app.theme.tokens }; return resolveTailwindStyle(this.node.className, theme); }
@@ -148,19 +149,22 @@ export struct UiIrRenderer {
       for (let i: number = 0; i < index; i++) {
         if (this.rawRepeatKey(items[i]) === key) { this.reportDiagnostic('重复 ForEach key：' + key); return 'index-' + index.toString(); }
       }
-      return key + '-' + this.hashUiValue(item);
+      // This is the ArkUI render key. Business identity comes only from keyPath;
+      // content hashes would remount an item whenever an editable field changes.
+      return key;
     }
     this.reportDiagnostic('ForEach 缺少有效 key：' + this.node.keyPath);
     return 'index-' + index.toString();
   }
+  private repeatStableKey(item: UiValue, index: number): string {
+    let key: string = this.rawRepeatKey(item);
+    return key.length > 0 ? key : 'index-' + index.toString();
+  }
+  private checkboxInstanceName(): string {
+    return this.node.id + (this.instanceKey.length > 0 ? '-' + this.instanceKey : '');
+  }
   private choiceRenderKey(item: string): string {
     return item + '-' + (item === this.boundText() ? 'selected' : 'idle');
-  }
-  private hashUiValue(item: UiValue): string {
-    let raw: string = JSON.stringify(item);
-    let hash: number = 7;
-    for (let i: number = 0; i < raw.length; i++) { hash = (hash * 31 + raw.charCodeAt(i)) % 2147483647; }
-    return hash.toString(36);
   }
   private rawRepeatKey(item: UiValue): string {
     let value: UiValue | undefined = this.readItemPath(item, this.node.keyPath);

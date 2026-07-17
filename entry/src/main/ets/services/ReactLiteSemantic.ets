@@ -10,6 +10,14 @@ export interface ReactLiteSemanticFingerprint {
   bindings: number;
   inputs: number;
   navigation: number;
+  pageIds: string[];
+  computedNames: string[];
+  repeatSources: string[];
+  repeatKeys: string[];
+  actionKinds: string[];
+  navigationTargets: string[];
+  agentIntents: string[];
+  bindingPaths: string[];
 }
 
 export function fingerprintReactLite(source: string): ReactLiteSemanticFingerprint {
@@ -23,7 +31,15 @@ export function fingerprintReactLite(source: string): ReactLiteSemanticFingerpri
       count(source, 'onSelect=') + count(source, 'onDismiss=') + count(source, 'onReachEnd=') + count(source, 'onLongPress='),
     bindings: count(source, 'bind='),
     inputs: count(source, '<TextInput') + count(source, '<TextArea') + count(source, '<Toggle') + count(source, '<Checkbox'),
-    navigation: count(source, 'navigate(') + count(source, 'back(') + count(source, 'popTo(') + count(source, 'replace(')
+    navigation: count(source, 'navigate(') + count(source, 'back(') + count(source, 'popTo(') + count(source, 'replace('),
+    pageIds: values(source, /<Page\s+id="([^"]+)"/g),
+    computedNames: values(source, /useComputed\s*\([^)]*\)\s*;?/g),
+    repeatSources: values(source, /<ForEach\s+items=\{([^}]+)\}/g),
+    repeatKeys: values(source, /keyBy="([^"]+)"/g),
+    actionKinds: values(source, /(?:navigate|back|popTo|replace|setState|toggleWhere|updateWhere|removeWhere|appendWithId|invokeAgent)\s*\(/g),
+    navigationTargets: values(source, /(?:navigate|popTo|replace)\("([^"]+)"\)/g),
+    agentIntents: values(source, /intent:\s*"([^"]+)"/g),
+    bindingPaths: values(source, /bind="([^"]+)"/g)
   };
 }
 
@@ -38,7 +54,25 @@ export function semanticRegression(before: ReactLiteSemanticFingerprint, after: 
   compare('bindings', before.bindings, after.bindings, diagnostics);
   compare('inputs', before.inputs, after.inputs, diagnostics);
   compare('navigation', before.navigation, after.navigation, diagnostics);
+  compareValues('page IDs', before.pageIds, after.pageIds, diagnostics);
+  compareValues('computed names', before.computedNames, after.computedNames, diagnostics);
+  compareValues('repeat sources', before.repeatSources, after.repeatSources, diagnostics);
+  compareValues('repeat keys', before.repeatKeys, after.repeatKeys, diagnostics);
+  compareValues('action kinds', before.actionKinds, after.actionKinds, diagnostics);
+  compareValues('navigation targets', before.navigationTargets, after.navigationTargets, diagnostics);
+  compareValues('agent intents', before.agentIntents, after.agentIntents, diagnostics);
+  compareValues('bindings', before.bindingPaths, after.bindingPaths, diagnostics);
   return diagnostics;
+}
+
+function compareValues(name: string, before: string[], after: string[], diagnostics: ReactLiteDiagnostic[]): void {
+  for (let i: number = 0; i < before.length; i++) {
+    if (after.indexOf(before[i]) < 0) {
+      diagnostics.push({ code: 'RL_REPAIR_SEMANTIC_REGRESSION', severity: 'error',
+        message: 'Repair 删除了 ' + name + '：' + before[i], line: 0, column: 0, length: 1,
+        suggestion: '保留原有语义，只修复诊断项。' });
+    }
+  }
 }
 
 function compare(name: string, before: number, after: number, diagnostics: ReactLiteDiagnostic[]): void {
@@ -66,6 +100,20 @@ function count(source: string, token: string): number {
     let index: number = source.indexOf(token, offset);
     if (index < 0) { break; }
     result++; offset = index + token.length;
+  }
+  return result;
+}
+
+function values(source: string, pattern: RegExp): string[] {
+  let result: string[] = [];
+  let matches: RegExpMatchArray | null = source.match(pattern);
+  if (matches === null) { return result; }
+  for (let i: number = 0; i < matches.length; i++) {
+    let value: string = matches[i];
+    let open: number = value.indexOf('"');
+    let close: number = value.lastIndexOf('"');
+    if (open >= 0 && close > open) { result.push(value.substring(open + 1, close)); }
+    else { result.push(value); }
   }
   return result;
 }

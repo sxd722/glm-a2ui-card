@@ -1,9 +1,11 @@
 import { http } from '@kit.NetworkKit';
-import { GlmChatPayload, GlmChatResponse, GlmContentPart, GlmLocalConfig, GlmMessage } from './A2uiTypes';
+import { GlmChatPayload, GlmChatResponse, GlmCompletionMetrics, GlmContentPart, GlmLocalConfig, GlmMessage } from './A2uiTypes';
 import { AgentTurnRequest } from './SkillTypes';
 import { AppBlueprint, AppPagePlan, RuntimeAgentTurnRequest, SkillManifest, SkillSource } from './SkillAppTypes';
 import { GLM_API_KEY } from '../config/GlmLocalSecrets';
 import { buildReactLitePrompt, buildReactLiteRepairPrompt, REACT_LITE_SYSTEM_PROMPT } from './ReactLitePrompt';
+import { GlmSseDecoder, GlmSseEvent, sseDeltaContent, sseFinishReason } from './GlmSseDecoder';
+import { emptyGlmMetrics, parseGlmCompletionResult } from './ReactLiteGenerationMetrics';
 
 export const GLM_CODING_ENDPOINT: string = 'https://open.bigmodel.cn/api/coding/paas/v4';
 export const GLM_GENERAL_ENDPOINT: string = 'https://open.bigmodel.cn/api/paas/v4';
@@ -16,6 +18,20 @@ export const GLM_VISION_FALLBACK_MODEL: string = 'glm-4v-flash';
 export const GLM_LOCAL_API_KEY: string = GLM_API_KEY;
 export const GLM_REQUEST_TIMEOUT_MS: number = 600000;
 export const GLM_VISION_REQUEST_TIMEOUT_MS: number = 120000;
+export let LAST_GLM_COMPLETION_METRICS: GlmCompletionMetrics = emptyGlmMetrics(GLM_DEFAULT_MODEL, false, false);
+
+export interface ReactLiteGenerationPolicy {
+  model: string;
+  thinkingDisabled: boolean;
+  doSample: boolean;
+  maxTokens: number;
+  streaming: boolean;
+}
+
+export function reactLiteMaxTokens(blueprint: AppBlueprint): number {
+  let value: number = 1800 + blueprint.pages.length * 850 + blueprint.dynamicSlots.length * 160 + blueprint.componentRecipes.length * 80;
+  return Math.max(3072, Math.min(8192, value));
+}
 
 const SYSTEM_PROMPT: string =
   'You generate A2UI v0.9 JSONL only. Return one createSurface message and one updateDataModel message. ' +
@@ -80,8 +96,8 @@ const ARK_UI_PAGE_SYSTEM_PROMPT: string =
   'Build a polished Morandi translucent interface with strong hierarchy, compact typography, coherent spacing, and at least one clear action.';
 
 const RUNTIME_AGENT_SYSTEM_PROMPT: string =
-  'Run one Nested App agent turn. Return one JSON object only. For a UI IR request, the canonical input is uiIrAction with this shape: ' +
-  '{"intent":"generateTripPlan","args":{"destination":"京都","selectedDay":"10.19"},"expectedOutputs":["summary"],"outputBindings":{"summary":"agentSummary"},"outputKinds":{"summary":"string"}}. ' +
+  'Run one Nested App agent turn. Return one JSON object only. For a UI IR request, the canonical input is a mode=ui-ir action with this shape: ' +
+  '{"mode":"ui-ir","action":{"intent":"generateTripPlan","args":{"destination":"京都","selectedDay":"10.19"},"expectedOutputs":["summary"],"outputKinds":{"summary":"string"}}}. ' +
   'Return the compact response shape {"assistantText":"...","state":{"summary":"..."},"status":"complete","errorMessage":""}. ' +
   'state must be an ordinary JSON object, never a tagged UiValue object, and may contain only expectedOutputs. Do not return kind,stringValue,numberValue,booleanValue,arrayValue,objectValue. ' +
   'Do not modify UI IR or navigate unless the supplied Action explicitly handles navigation. Only call availableTools. Use toolCalls only for reasoning-required orchestration; simple UI state is handled locally by the Action DSL. ' +
@@ -190,7 +206,18 @@ export async function requestReactLiteAppFromGlm(manifest: SkillManifest, bluepr
     { role: 'system', content: REACT_LITE_SYSTEM_PROMPT },
     { role: 'user', content: buildReactLitePrompt(manifest, blueprint, localAssetIds) }
   ];
-  return requestChatContent(messages, config, 0.2, GLM_REQUEST_TIMEOUT_MS);
+  let policy: ReactLiteGenerationPolicy = { model: 'glm-5.2', thinkingDisabled: true, doSample: false,
+    maxTokens: reactLiteMaxTokens(blueprint), streaming: true };
+  let generationConfig: GlmLocalConfig = { baseUrl: config.baseUrl, apiKey: config.apiKey, model: policy.model };
+  let source: string = await requestChatContent(messages, generationConfig, 0.2,
+    GLM_REQUEST_TIMEOUT_MS, policy);
+  if (LAST_GLM_COMPLETION_METRICS.finishReason === 'length') {
+    let retryPolicy: ReactLiteGenerationPolicy = { model: policy.model, thinkingDisabled: true, doSample: false,
+      maxTokens: Math.min(12288, Math.ceil(policy.maxTokens * 1.5)), streaming: true };
+    source = await requestChatContent(messages, generationConfig, 0.2, GLM_REQUEST_TIMEOUT_MS, retryPolicy);
+    LAST_GLM_COMPLETION_METRICS.truncatedRetry = true;
+  }
+  return source;
 }
 
 export async function requestReactLiteRepairFromGlm(manifest: SkillManifest, blueprint: AppBlueprint, source: string,
@@ -201,7 +228,9 @@ export async function requestReactLiteRepairFromGlm(manifest: SkillManifest, blu
     { role: 'system', content: REACT_LITE_SYSTEM_PROMPT },
     { role: 'user', content: prompt }
   ];
-  return requestChatContent(messages, config, 0.15, GLM_REQUEST_TIMEOUT_MS);
+  let policy: ReactLiteGenerationPolicy = { model: config.model, thinkingDisabled: true, doSample: false,
+    maxTokens: Math.min(12288, 8192), streaming: false };
+  return requestChatContent(messages, config, 0.15, GLM_REQUEST_TIMEOUT_MS, policy);
 }
 
 export async function requestNestedRuntimeTurnFromGlm(turn: RuntimeAgentTurnRequest,
@@ -233,14 +262,34 @@ function pageIds(blueprint: AppBlueprint): string[] {
 }
 
 async function requestChatContent(messages: GlmMessage[], config: GlmLocalConfig, temperature: number,
-  readTimeout: number = GLM_REQUEST_TIMEOUT_MS): Promise<string> {
+  readTimeout: number = GLM_REQUEST_TIMEOUT_MS, policy?: ReactLiteGenerationPolicy): Promise<string> {
+  if (policy !== undefined && policy.streaming) {
+    try {
+      return await requestStreamingChatContent(messages, config, policy, readTimeout);
+    } catch (error) {
+      let streamError: Error = error as Error;
+      if (!isStreamCapabilityError(streamError)) { throw streamError; }
+      let fallback: ReactLiteGenerationPolicy = { model: policy.model, thinkingDisabled: policy.thinkingDisabled,
+        doSample: policy.doSample, maxTokens: policy.maxTokens, streaming: false };
+      let result: string = await requestChatContent(messages, config, temperature, readTimeout, fallback);
+      LAST_GLM_COMPLETION_METRICS.streamFallback = true;
+      LAST_GLM_COMPLETION_METRICS.streamed = false;
+      return result;
+    }
+  }
   let client: http.HttpRequest = http.createHttp();
+  let startedAt: number = Date.now();
   let payload: GlmChatPayload = {
     model: config.model,
     messages: messages,
-    temperature: temperature,
-    stream: false
+    stream: policy === undefined ? false : policy.streaming
   };
+  if (policy === undefined || policy.doSample) { payload.temperature = temperature; }
+  if (policy !== undefined) {
+    payload.do_sample = policy.doSample;
+    payload.max_tokens = policy.maxTokens;
+    payload.thinking = { type: policy.thinkingDisabled ? 'disabled' : 'enabled' };
+  }
 
   try {
     let requestUrl: string = resolveChatCompletionsUrl(config.baseUrl);
@@ -277,6 +326,10 @@ async function requestChatContent(messages: GlmMessage[], config: GlmLocalConfig
 
       let body: string = response.result as string;
       if (response.responseCode >= 200 && response.responseCode < 300) {
+        if (policy !== undefined) {
+          let parsedResult = parseGlmCompletionResult(body, config.model, startedAt, false, false);
+          LAST_GLM_COMPLETION_METRICS = parsedResult.metrics;
+        }
         return extractContent(body);
       }
       if (!isRetryableResponse(response.responseCode) || attempt === maxAttempts) {
@@ -292,6 +345,125 @@ async function requestChatContent(messages: GlmMessage[], config: GlmLocalConfig
   } finally {
     client.destroy();
   }
+}
+
+async function requestStreamingChatContent(messages: GlmMessage[], config: GlmLocalConfig,
+  policy: ReactLiteGenerationPolicy, readTimeout: number): Promise<string> {
+  let client: http.HttpRequest = http.createHttp();
+  let decoder: GlmSseDecoder = new GlmSseDecoder();
+  let content: string = '';
+  let finishReason: string = '';
+  let startedAt: number = Date.now();
+  let firstTokenAt: number = 0;
+  let promptTokens: number = 0;
+  let completionTokens: number = 0;
+  let totalTokens: number = 0;
+  let cachedTokens: number = 0;
+  let requestId: string = '';
+  let resolveEnd: (() => void) | undefined = undefined;
+  let streamFinished: Promise<void> = new Promise<void>((resolve: () => void) => { resolveEnd = resolve; });
+  let consumeStreamEvents = (events: GlmSseEvent[]): void => {
+    for (let i: number = 0; i < events.length; i++) {
+      if (events[i].done) { continue; }
+      let delta: string = sseDeltaContent(events[i].data);
+      if (delta.length > 0) {
+        if (firstTokenAt === 0) { firstTokenAt = Date.now(); }
+        content += delta;
+      }
+      let finish: string = sseFinishReason(events[i].data);
+      if (finish.length > 0) { finishReason = finish; }
+      readStreamMetrics(events[i].data, (id: string, prompt: number, completion: number, total: number, cached: number): void => {
+        if (id.length > 0) { requestId = id; }
+        if (prompt > 0) { promptTokens = prompt; }
+        if (completion > 0) { completionTokens = completion; }
+        if (total > 0) { totalTokens = total; }
+        if (cached > 0) { cachedTokens = cached; }
+      });
+    }
+  };
+  let dataHandler = (chunk: ArrayBuffer): void => {
+    let events: GlmSseEvent[] = decoder.push(chunk);
+    consumeStreamEvents(events);
+  };
+  let endHandler = (): void => {
+    consumeStreamEvents(decoder.finish());
+    if (resolveEnd !== undefined) { resolveEnd(); }
+  };
+  try {
+    client.on('dataReceive', dataHandler);
+    client.on('dataEnd', endHandler);
+    let payload: GlmChatPayload = buildPayload(messages, config, policy);
+    let responseCode: number = await client.requestInStream(resolveChatCompletionsUrl(config.baseUrl), {
+      method: http.RequestMethod.POST,
+      header: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + config.apiKey,
+        'Accept': 'text/event-stream'
+      },
+      extraData: JSON.stringify(payload),
+      connectTimeout: 15000,
+      readTimeout: readTimeout
+    });
+    if (responseCode < 200 || responseCode >= 300) {
+      throw new Error('GLM_STREAM_HTTP_' + responseCode.toString());
+    }
+    await streamFinished;
+    if (content.length === 0) { throw new Error('GLM_STREAM_UNSUPPORTED_EMPTY'); }
+    let totalMs: number = Date.now() - startedAt;
+    let metrics: GlmCompletionMetrics = emptyGlmMetrics(policy.model, true, false);
+    metrics.totalMs = totalMs;
+    metrics.ttftMs = firstTokenAt === 0 ? 0 : firstTokenAt - startedAt;
+    metrics.requestId = requestId;
+    metrics.promptTokens = promptTokens;
+    metrics.completionTokens = completionTokens;
+    metrics.totalTokens = totalTokens;
+    metrics.cachedTokens = cachedTokens;
+    metrics.cacheRatio = promptTokens <= 0 ? 0 : cachedTokens / promptTokens;
+    metrics.sourceCharacters = content.length;
+    metrics.sourceLines = content.split('\n').length;
+    metrics.finishReason = finishReason;
+    LAST_GLM_COMPLETION_METRICS = metrics;
+    return normalizeDslContent(content);
+  } catch (error) {
+    let streamError: Error = error as Error;
+    if (streamError.message !== undefined && streamError.message.indexOf('GLM_STREAM_HTTP_') === 0) {
+      throw streamError;
+    }
+    throw new Error('GLM_STREAM_UNSUPPORTED: ' + streamError.message);
+  } finally {
+    client.off('dataReceive', dataHandler);
+    client.off('dataEnd', endHandler);
+    client.destroy();
+  }
+}
+
+function buildPayload(messages: GlmMessage[], config: GlmLocalConfig, policy: ReactLiteGenerationPolicy): GlmChatPayload {
+  let payload: GlmChatPayload = { model: policy.model, messages: messages, stream: true };
+  payload.do_sample = policy.doSample;
+  payload.max_tokens = policy.maxTokens;
+  payload.thinking = { type: policy.thinkingDisabled ? 'disabled' : 'enabled' };
+  return payload;
+}
+
+function readStreamMetrics(raw: string, onRead: (requestId: string, promptTokens: number, completionTokens: number,
+  totalTokens: number, cachedTokens: number) => void): void {
+  try {
+    let parsed: Record<string, Object> = JSON.parse(raw) as Record<string, Object>;
+    let usage = parsed['usage'] as Record<string, Object>;
+    if (usage === undefined || typeof usage !== 'object') { return; }
+    let details = usage['prompt_tokens_details'] as Record<string, Object>;
+    let id: string = parsed['id'] === undefined ? '' : String(parsed['id']);
+    let prompt: number = usage['prompt_tokens'] === undefined ? 0 : Number(usage['prompt_tokens']);
+    let completion: number = usage['completion_tokens'] === undefined ? 0 : Number(usage['completion_tokens']);
+    let total: number = usage['total_tokens'] === undefined ? 0 : Number(usage['total_tokens']);
+    let cached: number = details === undefined || details['cached_tokens'] === undefined ? 0 : Number(details['cached_tokens']);
+    onRead(id, prompt, completion, total, cached);
+  } catch (e) {
+  }
+}
+
+function isStreamCapabilityError(error: Error): boolean {
+  return error.message !== undefined && error.message.indexOf('GLM_STREAM_UNSUPPORTED') === 0;
 }
 
 function timeoutMessage(timeoutMs: number): string {

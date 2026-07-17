@@ -76,6 +76,7 @@ import { forgeReactLite } from '../services/ReactLiteForgeService';
 import { compileReactLiteMapSmoke, compileTodoReactLite, compileTravelReactLite, TRAVEL_REACT_LITE_SOURCE } from '../services/ReactLiteExamples';
 import { ReactLiteCompileResult, compileReactLite } from '../services/ReactLiteCompiler';
 import { UiAction, UiIrNode, UiIrSpec } from '../services/UiIrTypes';
+import { runTravelReactLiteAcceptance } from '../services/UiIrSelfTest';
 import { applyRuntimeAgentTurn, buildRuntimeAgentTurnRequest, normalizeRuntimeAgentTurnResult } from '../services/NestedAgentRuntime';
 import { saveForgeDraft, saveInstalledNestedApp, saveRunnerSession } from '../services/SkillAppStore';
 import {
@@ -120,6 +121,7 @@ struct Index {
   @State forgeReactLiteSource: string = '';
   @State forgeReactLiteRepairSource: string = '';
   @State forgeReactLiteDiagnostics: string = '';
+  @State forgeReactLiteMetrics: string = '';
   @State forgeUiIrJson: string = '';
   @State nestedSession: NestedSessionState = createNestedSession(defaultTravelNestedApp());
   @State nestedDslText: string = '';
@@ -493,6 +495,9 @@ struct Index {
       if (this.forgeReactLiteDiagnostics.length > 0) {
         this.ForgeArtifactPanel('React Lite 编译诊断', this.forgeReactLiteDiagnostics)
       }
+      if (this.forgeReactLiteMetrics.length > 0) {
+        this.ForgeArtifactPanel('React Lite 生成指标', this.forgeReactLiteMetrics)
+      }
       if (this.forgeUiIrJson.length > 0) {
         this.ForgeArtifactPanel('最终 UI IR（原生 ArkUI 渲染输入）', this.forgeUiIrJson)
       }
@@ -529,6 +534,7 @@ struct Index {
       this.ForgeArtifactPanel('React Lite UI 源码', this.forgeReactLiteSource)
       this.ForgeArtifactPanel('React Lite 修复源码', this.forgeReactLiteRepairSource)
       this.ForgeArtifactPanel('React Lite 编译诊断', this.forgeReactLiteDiagnostics)
+      this.ForgeArtifactPanel('React Lite 生成指标', this.forgeReactLiteMetrics)
       this.ForgeArtifactPanel('最终 UI IR', this.forgeUiIrJson)
       this.ForgeArtifactPanel('最终 Nested App DSL', this.nestedDslText)
       Text(this.forgeDraft.trace).fontSize(12).fontColor('#6B655E').width('100%')
@@ -1518,12 +1524,14 @@ struct Index {
     this.forgeReactLiteSource = '';
     this.forgeReactLiteRepairSource = '';
     this.forgeReactLiteDiagnostics = '';
+    this.forgeReactLiteMetrics = '';
     this.forgeUiIrJson = '';
     try {
       let reactLite = await forgeReactLite(this.forgeDraft.manifest, blueprint, this.forgeAssetIds(), config);
       this.forgeReactLiteSource = reactLite.source;
       this.forgeReactLiteRepairSource = reactLite.repairedSource;
       this.forgeReactLiteDiagnostics = reactLite.diagnostics.length === 0 ? '无解析诊断' : JSON.stringify(reactLite.diagnostics);
+      this.forgeReactLiteMetrics = JSON.stringify(reactLite.metrics);
       if (!reactLite.ok || reactLite.uiSpec === undefined) {
         throw new Error(reactLite.trace);
       }
@@ -1935,6 +1943,9 @@ struct Index {
       case 'runReactLiteSelfTest':
         this.runReactLiteSelfTestFromDebug();
         return;
+      case 'runTravelReactLiteAcceptance':
+        this.runTravelReactLiteAcceptanceFromDebug();
+        return;
       case 'resetWorkbench':
         this.resetWorkbenchFromDebug();
         return;
@@ -2193,6 +2204,13 @@ struct Index {
     if (!passed) { throw new Error(this.forgeReactLiteDiagnostics); }
   }
 
+  private runTravelReactLiteAcceptanceFromDebug(): void {
+    let result = runTravelReactLiteAcceptance();
+    this.forgeReactLiteDiagnostics = JSON.stringify(result);
+    this.statusText = result.ok ? '[HDC] Travel React Lite acceptance passed' : '[HDC] Travel React Lite acceptance failed';
+    if (!result.ok) { throw new Error(result.summary + ': ' + JSON.stringify(result)); }
+  }
+
   private countUiIrNodes(node: UiIrNode, kind: string): number {
     let total: number = node.kind === kind ? 1 : 0;
     for (let i: number = 0; i < node.children.length; i++) { total += this.countUiIrNodes(node.children[i], kind); }
@@ -2371,7 +2389,7 @@ function debugObjectBoolean(data: Record<string, Object>, key: string): boolean 
 }
 
 function trimDebugText(value: string): string {
-  return value.replace(/\r/g, ' ').replace(/\n/g, ' ').slice(0, 240);
+  return value.replace(/\r/g, ' ').replace(/\n/g, ' ').slice(0, 2000);
 }
 
 function requireArkUiPage(result: ArkUiPageParseResult): ArkUiPage {

@@ -97,6 +97,30 @@ export function reactLiteEventNames(): string[] {
 function descriptor(name: string, props: string[], events: string[], binding: boolean, template: boolean,
   lowering: ReactLiteCatalogLowering): ReactLiteComponentDescriptor {
   let descriptors: ReactLitePropDescriptor[] = [];
-  for (let i: number = 0; i < props.length; i++) { descriptors.push({ name: props[i], role: binding && props[i] === 'bind' ? 'binding' : 'runtimeProp', required: false, type: 'UiValue' }); }
+  for (let i: number = 0; i < props.length; i++) {
+    let propName: string = props[i];
+    descriptors.push({ name: propName, role: propRole(propName), required: requiredProp(name, propName), type: propType(propName) });
+  }
   return { name: name, props: descriptors, events: events, supportsBinding: binding, requiresItemTemplate: template, lowering: lowering };
+}
+
+function propRole(name: string): ReactLitePropRole {
+  return name === 'bind' ? 'binding' : name.indexOf('on') === 0 ? 'event' : 'runtimeProp';
+}
+
+function requiredProp(component: string, prop: string): boolean {
+  if (component === 'AppShell') { return ['id', 'title', 'initialPage'].indexOf(prop) >= 0; }
+  if (component === 'Page') { return ['id', 'title'].indexOf(prop) >= 0; }
+  if (component === 'Text' || component === 'Button') { return prop === 'text'; }
+  if (component === 'ForEach' || component === 'List' || component === 'ResultList') { return ['items', 'item', 'keyBy'].indexOf(prop) >= 0; }
+  return false;
+}
+
+function propType(prop: string): string {
+  if (prop === 'id' || prop === 'title' || prop === 'subtitle' || prop === 'initialPage' || prop === 'text' || prop === 'placeholder' || prop === 'assetId') { return 'string'; }
+  if (prop === 'scroll' || prop === 'checked') { return 'boolean'; }
+  if (prop === 'value') { return 'expression'; }
+  if (prop === 'items' || prop === 'options') { return 'array-expression'; }
+  if (prop === 'item' || prop === 'keyBy') { return 'identifier'; }
+  return 'UiValue';
 }

@@ -40,6 +40,7 @@ export function createRuntimeSession(appId: string): RuntimeSession {
 export function buildRuntimeAgentTurnRequest(session: NestedSessionState, current: NestedAction,
   manifest: SkillManifest): RuntimeAgentTurnRequest {
   return {
+    mode: 'legacy',
     turnId: 'turn-' + Date.now().toString(),
     appId: session.app.appId,
     skillId: manifest.skillId,
@@ -69,8 +70,13 @@ export function normalizeUiIrAgentTurnResult(raw: string, expectedOutputs: strin
   outputKinds: Record<string, UiValueKind>): RuntimeAgentTurnResult {
   try {
     let parsed: Record<string, Object> = JSON.parse(cleanJson(raw)) as Record<string, Object>;
+    if (typeof parsed['status'] !== 'string') { return errorTurn('Agent 响应缺少 status。'); }
     let state: Record<string, Object> | undefined = objectValue(parsed['state']);
-    if (state === undefined) { return errorTurn('Agent 响应缺少普通 JSON state。'); }
+    if (expectedOutputs.length > 0 && state === undefined) { return errorTurn('Agent 响应缺少普通 JSON state。'); }
+    if (expectedOutputs.length === 0 && state === undefined) {
+      return sanitizeTurnPayload(parsed);
+    }
+    if (state === undefined) { return errorTurn('Agent state 格式无效。'); }
     let keys: string[] = Object.keys(state);
     for (let i: number = 0; i < keys.length; i++) {
       if (expectedOutputs.indexOf(keys[i]) < 0) { return errorTurn('Agent 返回了未声明的输出字段：' + keys[i]); }
@@ -79,6 +85,9 @@ export function normalizeUiIrAgentTurnResult(raw: string, expectedOutputs: strin
       if (expectedKind !== undefined && plainValueKind(state[keys[i]]) !== expectedKind) {
         return errorTurn('Agent 输出类型不匹配：' + keys[i]);
       }
+    }
+    for (let i: number = 0; i < expectedOutputs.length; i++) {
+      if (state[expectedOutputs[i]] === undefined) { return errorTurn('Agent 缺少必需输出：' + expectedOutputs[i]); }
     }
     let result: RuntimeAgentTurnResult = sanitizeTurnPayload(parsed);
     if (result.status === 'error') { return result; }
