@@ -16,8 +16,13 @@ export const GLM_BLUEPRINT_FALLBACK_MODEL: string = 'glm-4.7-flash';
 export const GLM_VISION_MODEL: string = 'glm-4.6v-flash';
 export const GLM_VISION_FALLBACK_MODEL: string = 'glm-4v-flash';
 export const GLM_LOCAL_API_KEY: string = GLM_API_KEY;
-export const GLM_REQUEST_TIMEOUT_MS: number = 600000;
+export const GLM_REQUEST_TIMEOUT_MS: number = 120000;
 export const GLM_VISION_REQUEST_TIMEOUT_MS: number = 120000;
+// Keep React Lite on the bounded request path until the on-device crash corpus
+// proves that Network Kit SSE callbacks are safe for this runtime.
+export const REACT_LITE_STREAMING_ENABLED: boolean = false;
+export const MAX_STREAM_SOURCE_CHARACTERS: number = 300000;
+export const MAX_STREAM_TOTAL_TIMEOUT_MS: number = 120000;
 export let LAST_GLM_COMPLETION_METRICS: GlmCompletionMetrics = emptyGlmMetrics(GLM_DEFAULT_MODEL, false, false);
 
 export interface ReactLiteGenerationPolicy {
@@ -207,13 +212,13 @@ export async function requestReactLiteAppFromGlm(manifest: SkillManifest, bluepr
     { role: 'user', content: buildReactLitePrompt(manifest, blueprint, localAssetIds) }
   ];
   let policy: ReactLiteGenerationPolicy = { model: 'glm-5.2', thinkingDisabled: true, doSample: false,
-    maxTokens: reactLiteMaxTokens(blueprint), streaming: true };
+    maxTokens: reactLiteMaxTokens(blueprint), streaming: REACT_LITE_STREAMING_ENABLED };
   let generationConfig: GlmLocalConfig = { baseUrl: config.baseUrl, apiKey: config.apiKey, model: policy.model };
   let source: string = await requestChatContent(messages, generationConfig, 0.2,
     GLM_REQUEST_TIMEOUT_MS, policy);
   if (LAST_GLM_COMPLETION_METRICS.finishReason === 'length') {
     let retryPolicy: ReactLiteGenerationPolicy = { model: policy.model, thinkingDisabled: true, doSample: false,
-      maxTokens: Math.min(12288, Math.ceil(policy.maxTokens * 1.5)), streaming: true };
+      maxTokens: Math.min(12288, Math.ceil(policy.maxTokens * 1.5)), streaming: REACT_LITE_STREAMING_ENABLED };
     source = await requestChatContent(messages, generationConfig, 0.2, GLM_REQUEST_TIMEOUT_MS, retryPolicy);
     LAST_GLM_COMPLETION_METRICS.truncatedRetry = true;
   }
@@ -304,7 +309,7 @@ async function requestChatContent(messages: GlmMessage[], config: GlmLocalConfig
       }
       let response: http.HttpResponse;
       try {
-        response = await client.request(requestUrl, {
+        let requestOptions: http.HttpRequestOptions = {
           method: http.RequestMethod.POST,
           header: {
             'Content-Type': 'application/json',
@@ -314,7 +319,20 @@ async function requestChatContent(messages: GlmMessage[], config: GlmLocalConfig
           expectDataType: http.HttpDataType.STRING,
           connectTimeout: 15000,
           readTimeout: remainingMs
+        };
+        let watchdog: number = 0;
+        let watchdogPromise: Promise<http.HttpResponse> = new Promise<http.HttpResponse>((resolve: (value: http.HttpResponse) => void,
+          reject: (error: Error) => void) => {
+          watchdog = setTimeout((): void => {
+            try { client.destroy(); } catch (e) { }
+            reject(new Error(timeoutMessage(timeoutMs)));
+          }, remainingMs);
         });
+        try {
+          response = await Promise.race([client.request(requestUrl, requestOptions), watchdogPromise]);
+        } finally {
+          if (watchdog !== 0) { clearTimeout(watchdog); }
+        }
       } catch (error) {
         let err: Error = error as Error;
         let message: string = typeof err.message === 'string' ? err.message.toLowerCase() : '';
@@ -360,9 +378,25 @@ async function requestStreamingChatContent(messages: GlmMessage[], config: GlmLo
   let totalTokens: number = 0;
   let cachedTokens: number = 0;
   let requestId: string = '';
+  let settled: boolean = false;
   let resolveEnd: (() => void) | undefined = undefined;
-  let streamFinished: Promise<void> = new Promise<void>((resolve: () => void) => { resolveEnd = resolve; });
+  let rejectEnd: ((error: Error) => void) | undefined = undefined;
+  let streamFinished: Promise<void> = new Promise<void>((resolve: () => void, reject: (error: Error) => void) => {
+    resolveEnd = resolve;
+    rejectEnd = reject;
+  });
+  let settleResolve = (): void => {
+    if (settled) { return; }
+    settled = true;
+    if (resolveEnd !== undefined) { resolveEnd(); }
+  };
+  let settleReject = (error: Error): void => {
+    if (settled) { return; }
+    settled = true;
+    if (rejectEnd !== undefined) { rejectEnd(error); }
+  };
   let consumeStreamEvents = (events: GlmSseEvent[]): void => {
+    if (settled) { return; }
     for (let i: number = 0; i < events.length; i++) {
       if (events[i].done) { continue; }
       let delta: string = sseDeltaContent(events[i].data);
@@ -382,13 +416,29 @@ async function requestStreamingChatContent(messages: GlmMessage[], config: GlmLo
     }
   };
   let dataHandler = (chunk: ArrayBuffer): void => {
-    let events: GlmSseEvent[] = decoder.push(chunk);
-    consumeStreamEvents(events);
+    try {
+      if (settled) { return; }
+      let events: GlmSseEvent[] = decoder.push(chunk);
+      consumeStreamEvents(events);
+      if (content.length > MAX_STREAM_SOURCE_CHARACTERS) {
+        settleReject(new Error('GLM_STREAM_SOURCE_LIMIT'));
+      }
+    } catch (error) {
+      settleReject(streamError(error, 'GLM_STREAM_DECODE_FAILED'));
+    }
   };
   let endHandler = (): void => {
-    consumeStreamEvents(decoder.finish());
-    if (resolveEnd !== undefined) { resolveEnd(); }
+    try {
+      if (settled) { return; }
+      consumeStreamEvents(decoder.finish());
+      settleResolve();
+    } catch (error) {
+      settleReject(streamError(error, 'GLM_STREAM_FINISH_FAILED'));
+    }
   };
+  let timeoutHandle: number | undefined = setTimeout(() => {
+    settleReject(new Error(timeoutMessage(Math.min(readTimeout, MAX_STREAM_TOTAL_TIMEOUT_MS))));
+  }, Math.min(readTimeout, MAX_STREAM_TOTAL_TIMEOUT_MS));
   try {
     client.on('dataReceive', dataHandler);
     client.on('dataEnd', endHandler);
@@ -426,15 +476,32 @@ async function requestStreamingChatContent(messages: GlmMessage[], config: GlmLo
     return normalizeDslContent(content);
   } catch (error) {
     let streamError: Error = error as Error;
-    if (streamError.message !== undefined && streamError.message.indexOf('GLM_STREAM_HTTP_') === 0) {
+    if (isFatalStreamError(streamError)) {
       throw streamError;
     }
     throw new Error('GLM_STREAM_UNSUPPORTED: ' + streamError.message);
   } finally {
-    client.off('dataReceive', dataHandler);
-    client.off('dataEnd', endHandler);
-    client.destroy();
+    if (timeoutHandle !== undefined) { clearTimeout(timeoutHandle); }
+    safeStreamCleanup((): void => { client.off('dataReceive', dataHandler); });
+    safeStreamCleanup((): void => { client.off('dataEnd', endHandler); });
+    safeStreamCleanup((): void => { client.destroy(); });
   }
+}
+
+function streamError(error: Object, fallback: string): Error {
+  if (error instanceof Error && error.message.length > 0) { return error as Error; }
+  return new Error(fallback);
+}
+
+function safeStreamCleanup(cleanup: () => void): void {
+  try { cleanup(); } catch (error) { }
+}
+
+function isFatalStreamError(error: Error): boolean {
+  let message: string = error.message === undefined ? '' : error.message;
+  return message.indexOf('GLM_STREAM_HTTP_') === 0 || message.indexOf('GLM_STREAM_SOURCE_LIMIT') === 0 ||
+    message.indexOf('GLM_STREAM_DECODE_FAILED') === 0 || message.indexOf('GLM_STREAM_FINISH_FAILED') === 0 ||
+    message.indexOf('GLM 请求') === 0;
 }
 
 function buildPayload(messages: GlmMessage[], config: GlmLocalConfig, policy: ReactLiteGenerationPolicy): GlmChatPayload {

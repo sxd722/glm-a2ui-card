@@ -129,6 +129,7 @@ export interface ForgeDraft {
   reactLiteSource?: string;
   repairedReactLiteSource?: string;
   reactLiteDiagnostics?: ReactLiteDiagnostic[];
+  reactLiteFailureArtifact?: ReactLiteFailureArtifact;
   uiIrSpec?: UiIrSpec;
   generationMode?: 'reactLite' | 'legacyArkUiSpec';
 }
@@ -214,6 +215,22 @@ export interface LegacyRuntimeAgentTurnRequest {
   availableTools: ToolContract[];
   dynamicSlotIds: string[];
   toolResults: RuntimeToolResult[];
+}
+
+export type ReactLiteForgeStage = 'requesting' | 'raw-received' | 'normalizing' | 'parsing' |
+  'compiling' | 'validating' | 'quality-gate' | 'repairing' | 'complete' | 'failed';
+
+export interface ReactLiteFailureArtifact {
+  stage: ReactLiteForgeStage;
+  rawSource: string;
+  normalizedSource: string;
+  sourceLength: number;
+  sourceHash: string;
+  diagnostics: ReactLiteDiagnostic[];
+  errorName: string;
+  errorMessage: string;
+  stackSummary: string;
+  createdAt: number;
 }
 
 export interface UiIrAgentActionPayload {

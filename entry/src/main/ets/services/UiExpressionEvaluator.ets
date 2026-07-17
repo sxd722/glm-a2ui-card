@@ -4,11 +4,21 @@ import { arrayValue, booleanValue, numberValue, objectValue, stringValue, uiValu
 
 export interface UiComputedCache {
   values: Record<string, UiValue>;
+  evaluationSteps?: number;
+  computedEvaluations?: number;
 }
+
+const MAX_EVALUATION_STEPS: number = 10000;
+const MAX_EVALUATION_DEPTH: number = 32;
+const MAX_COMPUTED_EVALUATIONS: number = 128;
+const MAX_INTRINSIC_ITEMS: number = 200;
 
 export function evaluateExpression(expression: UiExpression | undefined, state: Record<string, UiValue>,
   computed: UiComputedDefinition[] = [], scope: UiEvaluationScope = { aliases: {}, event: {} },
   cache: UiComputedCache = { values: {} }, stack: string[] = []): UiValue {
+  let steps: number = cache.evaluationSteps === undefined ? 0 : cache.evaluationSteps;
+  cache.evaluationSteps = steps + 1;
+  if (cache.evaluationSteps > MAX_EVALUATION_STEPS || stack.length > MAX_EVALUATION_DEPTH) { return stringValue(''); }
   if (expression === undefined) { return stringValue(''); }
   if (expression.kind === 'literal') { return expression.literalValue === undefined ? stringValue('') : expression.literalValue; }
   if (expression.kind === 'path') { return resolvePath(expression.root, expression.segments, state, computed, scope, cache, stack); }
@@ -56,7 +66,10 @@ function computedRecord(definitions: UiComputedDefinition[], state: Record<strin
   let result: Record<string, UiValue> = {};
   for (let i: number = 0; i < definitions.length; i++) {
     let name: string = definitions[i].name;
-    if (cache.values[name] === undefined && stack.indexOf(name) < 0) {
+  if (cache.values[name] === undefined && stack.indexOf(name) < 0) {
+      let computedCount: number = cache.computedEvaluations === undefined ? 0 : cache.computedEvaluations;
+      cache.computedEvaluations = computedCount + 1;
+      if (cache.computedEvaluations > MAX_COMPUTED_EVALUATIONS) { continue; }
       cache.values[name] = evaluateExpression(definitions[i].expression, state, definitions, scope, cache, stack.concat([name]));
     }
     if (cache.values[name] !== undefined) { result[name] = cache.values[name]; }
@@ -89,6 +102,7 @@ function intrinsic(name: string, args: UiExpression[], state: Record<string, UiV
   cache: UiComputedCache, stack: string[]): UiValue {
   let values: UiValue[] = []; for (let i: number = 0; i < args.length; i++) { values.push(evaluateExpression(args[i], state, computed, scope, cache, stack)); }
   let list: UiValue = values.length > 0 ? values[0] : arrayValue([]);
+  if (list.kind === 'array' && list.arrayValue.length > MAX_INTRINSIC_ITEMS) { return stringValue(''); }
   if (name === 'length') { return numberValue(list.kind === 'array' ? list.arrayValue.length : uiValueToDisplayString(list).length); }
   if (name === 'includes') { return booleanValue(list.kind === 'array' && list.arrayValue.some((item: UiValue) => uiValueEquals(item, values[1]))); }
   if (name === 'slice' && list.kind === 'array') { return arrayValue(list.arrayValue.slice(uiValueToNumber(values[1]), uiValueToNumber(values[2]))); }

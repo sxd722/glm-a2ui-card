@@ -4,7 +4,7 @@ import { buildReactLiteGenerationBrief } from './ReactLiteGenerationBrief';
 
 export function buildReactLiteProtocolPrompt(): string {
   return 'protocolVersion=react-lite-prompt-0.3. Return one complete constrained React Lite TSX app only. No markdown, imports, comments, types, HTML, React APIs, browser APIs, arbitrary JavaScript, or URLs. ' +
-  'Use exactly export default function App(), one useState({...}), optional useComputed(...), and one AppShell with 2 to 5 Page nodes. ' +
+  'Use exactly export default function App(), one object-form useState({...}) written as const state=useState({...}); never use tuple destructuring such as const [state,setState]=useState(...), and never declare multiple state setters. Optional useComputed(...) is allowed, with one AppShell containing 2 to 5 Page nodes. ' +
   'Use semantic components whenever possible: Hero, Section, InfoCard, FormGroup, MetricGrid, Timeline, ResultList, MediaGallery, StatusBanner, Tabs, ActionBar, EmptyState. ' +
   'Use bind for input state. You may use state.items.map(item => (<Card key={item.id}>...</Card>)) and condition && <EmptyState/>; arrow functions may contain only one listed Action call or sequence. ' +
   'Use local Action Helpers for simple state, choices, tabs, toggles and navigation. Use invokeTool only for supplied implemented tools and invokeAgent only for reasoning. ' +
@@ -35,5 +35,5 @@ export function buildReactLitePrompt(manifest: SkillManifest, blueprint: AppBlue
 }
 
 export function buildReactLiteRepairPrompt(source: string, diagnostics: string): string {
-  return 'Repair this React Lite source. Return the complete corrected source only. Preserve every Page, useState field, useComputed, map/ForEach, input, binding and Action. Fix only listed diagnostics. Never replace a complex list with an empty ResultList or EmptyState. Do not add imports, comments, HTML, JavaScript, arbitrary functions, unknown components, unknown actions or URLs. Diagnostics=' + diagnostics + '\nSOURCE=' + source;
+  return 'Repair this React Lite source. Return the complete corrected source only. Preserve every Page, useState field, useComputed, map/ForEach, input, binding and Action. Fix only listed diagnostics. Use object-form state exactly as const state=useState({...}); never emit const [state,setState]=useState(...), tuple destructuring, multiple state setters or arbitrary Hook names. Never replace a complex list with an empty ResultList or EmptyState. Do not add imports, comments, HTML, JavaScript, arbitrary functions, unknown components, unknown actions or URLs. Diagnostics=' + diagnostics + '\nSOURCE=' + source;
 }

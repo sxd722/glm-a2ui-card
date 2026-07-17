@@ -21,6 +21,23 @@ export interface ReactLiteCompileResult {
 }
 
 export function compileReactLite(source: string, context: ReactLiteCompileContext): ReactLiteCompileResult {
+  try {
+    return compileReactLiteInternal(source, context);
+  } catch (error) {
+    return { ok: false, value: undefined, diagnostics: [
+      { code: 'RL_COMPILER_INTERNAL_ERROR', severity: 'error', message: 'React Lite Compiler 发生受控异常。',
+        line: 1, column: 1, length: 1, suggestion: '检查生成源码并重新生成。' }
+    ], uiDiagnostics: [] };
+  }
+}
+
+// Public boundary used by Forge and debug callers. Keep the existing name for
+// ui-ir-1 compatibility while making the safe contract explicit.
+export function compileReactLiteSafe(source: string, context: ReactLiteCompileContext): ReactLiteCompileResult {
+  return compileReactLite(source, context);
+}
+
+function compileReactLiteInternal(source: string, context: ReactLiteCompileContext): ReactLiteCompileResult {
   let parsed = parseReactLite(source);
   if (!parsed.ok || parsed.ast === undefined || parsed.ast.root === undefined) {
     return { ok: false, value: undefined, diagnostics: parsed.diagnostics, uiDiagnostics: [] };
@@ -174,6 +191,16 @@ function compileExpressionNode(expression: ReactLiteExpression, preset: string, 
     let child: UiIrNode = compileNode(expression.right.jsxNode, preset, diagnostics);
     return { kind: 'if', id: 'if-' + sourceNode.line.toString() + '-' + sourceNode.column.toString(), component: 'Column', props: {}, binding: '', className: '', actions: {},
       children: [child], condition: compileExpression(expression.left), itemAlias: '', keyPath: '' };
+  }
+  if (expression.kind === 'conditional' && expression.consequent !== undefined && expression.alternate !== undefined) {
+    if (expression.consequent.kind === 'jsx' && expression.consequent.jsxNode !== undefined &&
+      expression.alternate.kind === 'literal' && expression.alternate.value === 'null') {
+      let child: UiIrNode = compileNode(expression.consequent.jsxNode, preset, diagnostics);
+      return { kind: 'if', id: 'if-' + sourceNode.line.toString() + '-' + sourceNode.column.toString(), component: 'Column', props: {}, binding: '', className: '', actions: {},
+        children: [child], condition: compileExpression(expression.test), itemAlias: '', keyPath: '' };
+    }
+    diagnostics.push(diagnostic('RL_CONDITIONAL_BRANCH_UNSUPPORTED', '仅支持 condition ? <Component/> : null。', sourceNode));
+    return elementNode('invalid-conditional-' + sourceNode.line.toString(), 'EmptyState', {}, 'w-full p-4 bg-card rounded-xl', {}, []);
   }
   if (expression.kind === 'map' && expression.source !== undefined && expression.template !== undefined) {
     let template: ReactLiteAstNode = expression.template;

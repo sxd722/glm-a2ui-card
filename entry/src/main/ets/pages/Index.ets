@@ -66,6 +66,7 @@ import {
   localBlueprintForManifest,
   normalizeAppBlueprint,
   normalizeSkillManifest,
+  updateDraftReactLiteFailure,
   updateDraftUiIrSpec,
   updateDraftBlueprint,
   updateDraftUiSpec,
@@ -75,10 +76,11 @@ import { AppBlueprint, AppBlueprintParseResult, ForgeDraft, RuntimeAgentTurnRequ
 import { forgeReactLite } from '../services/ReactLiteForgeService';
 import { compileReactLiteMapSmoke, compileTodoReactLite, compileTravelReactLite, TRAVEL_REACT_LITE_SOURCE } from '../services/ReactLiteExamples';
 import { ReactLiteCompileResult, compileReactLite } from '../services/ReactLiteCompiler';
+import { runReactLiteCrashCorpus } from '../services/ReactLiteCrashCorpus';
 import { UiAction, UiIrNode, UiIrSpec } from '../services/UiIrTypes';
 import { runTravelReactLiteAcceptance } from '../services/UiIrSelfTest';
 import { applyRuntimeAgentTurn, buildRuntimeAgentTurnRequest, normalizeRuntimeAgentTurnResult } from '../services/NestedAgentRuntime';
-import { saveForgeDraft, saveInstalledNestedApp, saveRunnerSession } from '../services/SkillAppStore';
+import { readForgeDraft, saveForgeDraft, saveInstalledNestedApp, saveRunnerSession } from '../services/SkillAppStore';
 import {
   HDC_DEBUG_EVENT,
   HdcDebugCommand,
@@ -122,6 +124,7 @@ struct Index {
   @State forgeReactLiteRepairSource: string = '';
   @State forgeReactLiteDiagnostics: string = '';
   @State forgeReactLiteMetrics: string = '';
+  @State forgeReactLiteFailureArtifact: string = '';
   @State forgeUiIrJson: string = '';
   @State nestedSession: NestedSessionState = createNestedSession(defaultTravelNestedApp());
   @State nestedDslText: string = '';
@@ -135,6 +138,7 @@ struct Index {
 
   aboutToAppear(): void {
     this.preview = projectDslToCardPreview(this.dslText);
+    this.restorePersistedForgeDraft();
     this.context.eventHub.on(HDC_DEBUG_EVENT, this.hdcDebugListener);
     this.drainHdcDebugCommands();
   }
@@ -498,6 +502,9 @@ struct Index {
       if (this.forgeReactLiteMetrics.length > 0) {
         this.ForgeArtifactPanel('React Lite 生成指标', this.forgeReactLiteMetrics)
       }
+      if (this.forgeReactLiteFailureArtifact.length > 0) {
+        this.ForgeArtifactPanel('React Lite Failure Artifact', this.forgeReactLiteFailureArtifact)
+      }
       if (this.forgeUiIrJson.length > 0) {
         this.ForgeArtifactPanel('最终 UI IR（原生 ArkUI 渲染输入）', this.forgeUiIrJson)
       }
@@ -535,6 +542,7 @@ struct Index {
       this.ForgeArtifactPanel('React Lite 修复源码', this.forgeReactLiteRepairSource)
       this.ForgeArtifactPanel('React Lite 编译诊断', this.forgeReactLiteDiagnostics)
       this.ForgeArtifactPanel('React Lite 生成指标', this.forgeReactLiteMetrics)
+      this.ForgeArtifactPanel('React Lite Failure Artifact', this.forgeReactLiteFailureArtifact)
       this.ForgeArtifactPanel('最终 UI IR', this.forgeUiIrJson)
       this.ForgeArtifactPanel('最终 Nested App DSL', this.nestedDslText)
       Text(this.forgeDraft.trace).fontSize(12).fontColor('#6B655E').width('100%')
@@ -1525,6 +1533,7 @@ struct Index {
     this.forgeReactLiteRepairSource = '';
     this.forgeReactLiteDiagnostics = '';
     this.forgeReactLiteMetrics = '';
+    this.forgeReactLiteFailureArtifact = '';
     this.forgeUiIrJson = '';
     try {
       let reactLite = await forgeReactLite(this.forgeDraft.manifest, blueprint, this.forgeAssetIds(), config);
@@ -1532,6 +1541,10 @@ struct Index {
       this.forgeReactLiteRepairSource = reactLite.repairedSource;
       this.forgeReactLiteDiagnostics = reactLite.diagnostics.length === 0 ? '无解析诊断' : JSON.stringify(reactLite.diagnostics);
       this.forgeReactLiteMetrics = JSON.stringify(reactLite.metrics);
+      this.forgeReactLiteFailureArtifact = reactLite.failureArtifact === undefined ? '' : JSON.stringify(reactLite.failureArtifact);
+      if (reactLite.failureArtifact !== undefined) {
+        this.forgeDraft = updateDraftReactLiteFailure(this.forgeDraft, reactLite.failureArtifact, reactLite.trace);
+      }
       if (!reactLite.ok || reactLite.uiSpec === undefined) {
         throw new Error(reactLite.trace);
       }
@@ -1548,7 +1561,9 @@ struct Index {
       this.forgeDraft.errorMessage = 'React Lite 生成失败：' + (error as BusinessError).message;
       this.forgeReactLiteDiagnostics = this.forgeDraft.errorMessage;
       this.nestedSession.errorMessage = this.forgeDraft.errorMessage;
+      this.forgeStage = 'failed';
       this.statusText = 'React Lite 生成失败；未写入新的 UI 草稿。';
+      try { await saveForgeDraft(this.context, this.forgeDraft); } catch (saveError) { }
       return;
     }
     let generatedPages: ArkUiPage[] = [];
@@ -1946,6 +1961,12 @@ struct Index {
       case 'runTravelReactLiteAcceptance':
         this.runTravelReactLiteAcceptanceFromDebug();
         return;
+      case 'runReactLiteCrashCorpus':
+        this.runReactLiteCrashCorpusFromDebug();
+        return;
+      case 'inspectReactLiteFailure':
+        this.inspectReactLiteFailureFromDebug();
+        return;
       case 'resetWorkbench':
         this.resetWorkbenchFromDebug();
         return;
@@ -1988,7 +2009,9 @@ struct Index {
   }
 
   private async runForgePipelineFromDebug(payload: string): Promise<void> {
-    if (payload.trim().length > 0) {
+    let trimmedPayload: string = payload.trim();
+    let isControlPayload: boolean = trimmedPayload === 'run' || trimmedPayload === 'start';
+    if (trimmedPayload.length > 0 && !isControlPayload) {
       this.setForgeSourceFromDebug(payload);
     } else if (this.forgeSourceKind.length === 0) {
       throw new Error('runForgePipeline requires a Forge source payload');
@@ -2000,10 +2023,13 @@ struct Index {
       throw new Error('Forge pipeline stopped after SkillManifest');
     }
     await this.prepareForgePreview();
-    if (this.forgeBlueprintJson.length === 0 || this.nestedDslText.length === 0) {
+    if (this.forgeBlueprintJson.length === 0) {
       throw new Error('Forge pipeline stopped after AppBlueprint');
     }
-    let data: Record<string, Object> = payload.trim().length > 0 ? parseDebugObject(payload) : {};
+    if (this.nestedDslText.length === 0) {
+      throw new Error(this.forgeDraft.errorMessage.length > 0 ? this.forgeDraft.errorMessage : 'Forge pipeline stopped during React Lite generation');
+    }
+    let data: Record<string, Object> = trimmedPayload.length > 0 && !isControlPayload ? parseDebugObject(payload) : {};
     if (debugObjectBoolean(data, 'install')) {
       await this.installForgePreview();
     }
@@ -2158,6 +2184,30 @@ struct Index {
     if (this.nestedFlow === 'runtime') { this.statusText = '[HDC] travel ArkUiSpec app loaded'; }
   }
 
+  private restorePersistedForgeDraft(): void {
+    let saved: ForgeDraft | undefined = readForgeDraft(this.context);
+    if (saved === undefined) { return; }
+    this.forgeDraft = saved;
+    this.forgeSourceKind = saved.source.kind;
+    this.forgeSourceValue = saved.source.textContent;
+    this.forgeRepositoryUrl = saved.source.uri;
+    this.forgeSkillFileName = saved.source.displayName;
+    this.forgeSkillName = saved.manifest.skillName;
+    this.forgeSkillGoal = saved.manifest.description;
+    this.forgeManifestJson = JSON.stringify(saved.manifest);
+    this.forgeBlueprintJson = JSON.stringify(saved.blueprint);
+    this.forgeReactLiteSource = saved.reactLiteSource === undefined ? '' : saved.reactLiteSource;
+    this.forgeReactLiteRepairSource = saved.repairedReactLiteSource === undefined ? '' : saved.repairedReactLiteSource;
+    this.forgeReactLiteFailureArtifact = saved.reactLiteFailureArtifact === undefined ? '' : JSON.stringify(saved.reactLiteFailureArtifact);
+    this.forgeReactLiteDiagnostics = saved.reactLiteDiagnostics === undefined ? '' : JSON.stringify(saved.reactLiteDiagnostics);
+    this.forgeUiIrJson = saved.uiIrSpec === undefined ? '' : JSON.stringify(saved.uiIrSpec);
+    this.nestedDslText = this.forgeUiIrJson;
+    if (saved.status === 'error') { this.forgeStage = 'failed'; }
+    else if (saved.uiIrSpec !== undefined) { this.forgeStage = 'preview'; }
+    else if (saved.status === 'configured') { this.forgeStage = 'setup'; }
+    else { this.forgeStage = 'analyze'; }
+  }
+
   private async loadReactLiteDemoFromDebug(): Promise<void> {
     this.workspaceMode = 'nested';
     await this.launchTravelDemo();
@@ -2211,6 +2261,21 @@ struct Index {
     if (!result.ok) { throw new Error(result.summary + ': ' + JSON.stringify(result)); }
   }
 
+  private runReactLiteCrashCorpusFromDebug(): void {
+    let result = runReactLiteCrashCorpus();
+    this.forgeReactLiteDiagnostics = JSON.stringify(result);
+    this.statusText = result.passed === result.total ? '[HDC] React Lite crash corpus passed' : '[HDC] React Lite crash corpus failed';
+    if (result.passed !== result.total) { throw new Error(JSON.stringify(result)); }
+  }
+
+  private inspectReactLiteFailureFromDebug(): void {
+    let artifact = this.forgeDraft.reactLiteFailureArtifact;
+    if (artifact === undefined) { throw new Error('No persisted React Lite failure artifact'); }
+    this.forgeStage = 'failed';
+    this.statusText = '[HDC] React Lite failure artifact available: ' + artifact.stage;
+    this.forgeReactLiteDiagnostics = JSON.stringify(artifact.diagnostics);
+  }
+
   private countUiIrNodes(node: UiIrNode, kind: string): number {
     let total: number = node.kind === kind ? 1 : 0;
     for (let i: number = 0; i < node.children.length; i++) { total += this.countUiIrNodes(node.children[i], kind); }
@@ -2256,6 +2321,15 @@ struct Index {
   }
 
   private hdcDebugSnapshot(): HdcDebugSnapshot {
+    let failure = this.forgeDraft.reactLiteFailureArtifact;
+    let diagnosticCodes: string = '';
+    if (failure !== undefined) {
+      let codes: string[] = [];
+      for (let i: number = 0; i < failure.diagnostics.length; i++) {
+        if (codes.indexOf(failure.diagnostics[i].code) < 0) { codes.push(failure.diagnostics[i].code); }
+      }
+      diagnosticCodes = codes.join(',');
+    }
     return {
       workspaceMode: this.workspaceMode,
       nestedFlow: this.nestedFlow,
@@ -2269,7 +2343,12 @@ struct Index {
       errorMessage: trimDebugText(this.nestedSession.errorMessage),
       manifestLength: this.forgeManifestJson.length,
       blueprintLength: this.forgeBlueprintJson.length,
-      dslLength: this.nestedDslText.length
+      dslLength: this.nestedDslText.length,
+      reactLiteFailureStage: failure === undefined ? '' : failure.stage,
+      reactLiteRawLength: failure === undefined ? 0 : failure.rawSource.length,
+      reactLiteNormalizedLength: failure === undefined ? 0 : failure.normalizedSource.length,
+      reactLiteSourceHash: failure === undefined ? '' : failure.sourceHash,
+      reactLiteDiagnosticCodes: diagnosticCodes
     };
   }
 

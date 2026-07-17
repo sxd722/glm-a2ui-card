@@ -12,7 +12,8 @@ export type HdcDebugAction = 'setForgeSource' | 'runForgeAnalyze' | 'runForgePre
   'setNestedFields' | 'runNestedAction' | 'loadForgeImageFromDevice' | 'loadForgeImageDataUrl' |
   'resetForgeImageTransfer' | 'appendForgeImageChunk' | 'finishForgeImageTransfer' |
   'exportForgeArtifacts' | 'exportCurrentArtifacts' | 'loadTravelDemo' | 'loadReactLiteDemo' |
-  'compileReactLiteSource' | 'runReactLiteSelfTest' | 'runTravelReactLiteAcceptance' | 'resetWorkbench';
+  'compileReactLiteSource' | 'runReactLiteSelfTest' | 'runTravelReactLiteAcceptance' | 'runReactLiteCrashCorpus' |
+  'inspectReactLiteFailure' | 'resetWorkbench';
 export type HdcDebugScope = 'forge' | 'runner' | 'any';
 
 export interface HdcDebugCommand {
@@ -36,6 +37,11 @@ export interface HdcDebugSnapshot {
   manifestLength: number;
   blueprintLength: number;
   dslLength: number;
+  reactLiteFailureStage: string;
+  reactLiteRawLength: number;
+  reactLiteNormalizedLength: number;
+  reactLiteSourceHash: string;
+  reactLiteDiagnosticCodes: string;
 }
 
 export interface HdcDebugResult {
@@ -74,7 +80,12 @@ const EMPTY_SNAPSHOT: HdcDebugSnapshot = {
   errorMessage: '',
   manifestLength: 0,
   blueprintLength: 0,
-  dslLength: 0
+  dslLength: 0,
+  reactLiteFailureStage: '',
+  reactLiteRawLength: 0,
+  reactLiteNormalizedLength: 0,
+  reactLiteSourceHash: '',
+  reactLiteDiagnosticCodes: ''
 };
 
 let pendingCommands: HdcDebugCommand[] = [];
@@ -231,7 +242,8 @@ function isHdcDebugAction(value: string): boolean {
     value === 'resetForgeImageTransfer' || value === 'appendForgeImageChunk' ||
     value === 'finishForgeImageTransfer' || value === 'exportForgeArtifacts' || value === 'exportCurrentArtifacts' ||
     value === 'loadTravelDemo' || value === 'loadReactLiteDemo' || value === 'compileReactLiteSource' ||
-    value === 'runReactLiteSelfTest' || value === 'runTravelReactLiteAcceptance' || value === 'resetWorkbench';
+    value === 'runReactLiteSelfTest' || value === 'runTravelReactLiteAcceptance' || value === 'runReactLiteCrashCorpus' ||
+    value === 'inspectReactLiteFailure' || value === 'resetWorkbench';
 }
 
 function debugScope(action: HdcDebugAction): HdcDebugScope {
@@ -245,7 +257,8 @@ function debugScope(action: HdcDebugAction): HdcDebugScope {
     action === 'finishForgeImageTransfer' || action === 'exportForgeArtifacts') {
     return 'forge';
   }
-  if (action === 'loadReactLiteDemo' || action === 'compileReactLiteSource' || action === 'runReactLiteSelfTest') {
+  if (action === 'loadReactLiteDemo' || action === 'compileReactLiteSource' || action === 'runReactLiteSelfTest' ||
+    action === 'runReactLiteCrashCorpus' || action === 'inspectReactLiteFailure') {
     return 'forge';
   }
   return 'any';

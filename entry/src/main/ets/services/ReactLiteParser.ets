@@ -4,16 +4,30 @@ import { ReactLiteAst, ReactLiteAstAttribute, ReactLiteAstNode, ReactLiteDiagnos
 import { reactLiteAllowedEvents, reactLiteAllowedProps, reactLiteComponentNames } from './ReactLiteCatalog';
 
 const COMPONENTS: string[] = reactLiteComponentNames();
+const MAX_SOURCE_CHARACTERS: number = 300000;
+const MAX_TOKENS: number = 100000;
+const MAX_PARSE_STEPS: number = 300000;
+const MAX_PARSE_DEPTH: number = 64;
 const PRECEDENCE: Record<string, number> = { '??': 1, '||': 2, '&&': 3, '===': 4, '!==': 4, '==': 4, '!=': 4,
   '<': 5, '<=': 5, '>': 5, '>=': 5, '+': 6, '-': 6, '*': 7, '/': 7, '%': 7 };
 
 export function parseReactLite(source: string): ReactLiteParseResult {
-  let tokenResult = tokenizeReactLite(source);
-  let parser: Parser = new Parser(tokenResult.tokens, tokenResult.diagnostics);
-  let ast: ReactLiteAst = parser.parse();
-  let diagnostics: ReactLiteDiagnostic[] = parser.diagnostics;
-  return { ok: diagnostics.filter((item: ReactLiteDiagnostic) => item.severity === 'error').length === 0 && ast.root !== undefined,
-    ast: ast.root === undefined ? undefined : ast, diagnostics: diagnostics };
+  try {
+    if (source.length > MAX_SOURCE_CHARACTERS) {
+      return { ok: false, ast: undefined, diagnostics: [parserDiagnostic('RL_SOURCE_SIZE_LIMIT', 'React Lite 源码超过长度限制。')] };
+    }
+    let tokenResult = tokenizeReactLite(source);
+    if (tokenResult.tokens.length > MAX_TOKENS) {
+      return { ok: false, ast: undefined, diagnostics: tokenResult.diagnostics.concat([parserDiagnostic('RL_TOKEN_LIMIT', 'React Lite Token 数量超过限制。')]) };
+    }
+    let parser: Parser = new Parser(tokenResult.tokens, tokenResult.diagnostics);
+    let ast: ReactLiteAst = parser.parse();
+    let diagnostics: ReactLiteDiagnostic[] = parser.diagnostics;
+    return { ok: diagnostics.filter((item: ReactLiteDiagnostic) => item.severity === 'error').length === 0 && ast.root !== undefined,
+      ast: ast.root === undefined ? undefined : ast, diagnostics: diagnostics };
+  } catch (error) {
+    return { ok: false, ast: undefined, diagnostics: [parserDiagnostic('RL_PARSER_INTERNAL_ERROR', 'React Lite Parser 发生受控异常。')] };
+  }
 }
 
 class Parser {
@@ -22,6 +36,8 @@ class Parser {
   public diagnostics: ReactLiteDiagnostic[];
   private computed: Record<string, ReactLiteExpression> = {};
   private initialState: ReactLiteExpression = literalObject([]);
+  private steps: number = 0;
+  private depth: number = 0;
 
   constructor(tokens: ReactLiteToken[], diagnostics: ReactLiteDiagnostic[]) {
     this.tokens = tokens; this.diagnostics = diagnostics;
@@ -34,7 +50,10 @@ class Parser {
     this.expect('identifier', 'App', 'RL1002', '函数名称必须是 App。');
     this.expectValue('(', 'RL1001'); this.expectValue(')', 'RL1001'); this.expectValue('{', 'RL1001');
     while (!this.checkValue('return') && !this.checkKind('eof') && !this.checkValue('}')) {
+      if (!this.tick('RL_PARSE_BUDGET_EXCEEDED')) { break; }
+      let startIndex: number = this.index;
       this.parseConst();
+      if (this.index === startIndex) { this.recoverToBoundary(); }
     }
     this.expect('identifier', 'return', 'RL1002', '函数体必须返回 AppShell。');
     let wrapped: boolean = this.checkValue('(');
@@ -48,7 +67,21 @@ class Parser {
 
   private parseConst(): void {
     this.expect('identifier', 'const', 'RL1002', '只允许 const state/useComputed 声明。');
-    let name: string = this.current().value; this.expectKind('identifier', 'RL1002');
+    let name: string = '';
+    if (this.checkValue('[')) {
+      this.index++;
+      name = this.current().value;
+      this.expectKind('identifier', 'RL1002');
+      if (this.checkValue(',')) { this.index++; }
+      if (this.checkKind('identifier')) { this.index++; }
+      this.expectValue(']', 'RL1001');
+      if (name !== 'state') {
+        this.addError('RL_STATE_TUPLE_UNSUPPORTED', 'React Lite 只允许 [state, setState] 这一种状态解构。', this.current(),
+          '改为 const state = useState({...})。');
+      }
+    } else {
+      name = this.current().value; this.expectKind('identifier', 'RL1002');
+    }
     this.expectValue('=', 'RL1001');
     let hook: string = this.current().value; this.expectKind('identifier', 'RL1006');
     this.expectValue('(', 'RL1001'); let expression: ReactLiteExpression = this.parseExpression(); this.expectValue(')', 'RL1001');
@@ -66,7 +99,17 @@ class Parser {
   }
 
   private parseJsxNode(): ReactLiteAstNode | undefined {
-    if (!this.checkValue('<')) { this.addError('RL1001', '期望 JSX 组件。', this.current()); return undefined; }
+    if (!this.tick('RL_PARSE_BUDGET_EXCEEDED')) { return undefined; }
+    if (this.depth >= MAX_PARSE_DEPTH) { this.addError('RL_PARSE_DEPTH_EXCEEDED', 'JSX 嵌套深度超过限制。', this.current()); this.recoverToBoundary(); return undefined; }
+    this.depth++;
+    if (!this.checkValue('<')) { this.addError('RL1001', '期望 JSX 组件。', this.current()); this.depth--; return undefined; }
+    if (this.peek(1).value === '>') {
+      this.addError('RL_FRAGMENT_UNSUPPORTED', 'JSX Fragment 暂不支持。', this.current(), '使用 Column 或显式容器组件。');
+      this.index += 2;
+      this.recoverToBoundary();
+      this.depth--;
+      return undefined;
+    }
     let open = this.current(); this.index++;
     let closing: boolean = this.checkValue('/'); if (closing) { this.index++; }
     let component: string = this.current().value; this.expectKind('identifier', 'RL1004');
@@ -74,12 +117,19 @@ class Parser {
       this.addError('RL1004', '未知或暂不支持的组件：' + component, open, '使用受限组件目录。');
     }
     let attributes: ReactLiteAstAttribute[] = [];
-    while (!this.checkValue('>') && !this.checkValue('/') && !this.checkKind('eof')) { attributes.push(this.parseAttribute()); }
+    while (!this.checkValue('>') && !this.checkValue('/') && !this.checkKind('eof')) {
+      if (!this.tick('RL_PARSE_BUDGET_EXCEEDED')) { break; }
+      let startIndex: number = this.index;
+      attributes.push(this.parseAttribute());
+      if (this.index === startIndex) { this.addError('RL_PARSE_NO_PROGRESS', '属性解析无法继续。', this.current()); this.recoverToBoundary(); }
+    }
     this.validateAttributes(component, attributes);
-    if (this.checkValue('/')) { this.index++; this.expectValue('>', 'RL1001'); return nodeFor(component, attributes, [], open); }
+    if (this.checkValue('/')) { this.index++; this.expectValue('>', 'RL1001'); this.depth--; return nodeFor(component, attributes, [], open); }
     this.expectValue('>', 'RL1001');
     let children: ReactLiteAstNode[] = [];
     while (!this.checkKind('eof') && !(this.checkValue('<') && this.peek(1).value === '/')) {
+      if (!this.tick('RL_PARSE_BUDGET_EXCEEDED')) { break; }
+      let startIndex: number = this.index;
       if (this.checkValue('<')) { let child = this.parseJsxNode(); if (child !== undefined) { children.push(child); } }
       else if (this.checkKind('jsxText')) {
         let text = this.current(); this.index++; if (text.value.trim().length > 0) { children.push(textNode(text)); }
@@ -89,11 +139,13 @@ class Parser {
         this.expectValue('}', 'RL1001');
         children.push(expressionNode(expression, expressionToken));
       } else { this.index++; }
+      if (this.index === startIndex) { this.addError('RL_PARSE_NO_PROGRESS', 'JSX 子节点解析无法继续。', this.current()); this.recoverToBoundary(); }
     }
     this.expectValue('<', 'RL1001'); this.expectValue('/', 'RL1001');
     let endName: string = this.current().value; this.expectKind('identifier', 'RL1001');
     if (endName !== component) { this.addError('RL1001', 'JSX 标签未正确闭合。', this.current()); }
     this.expectValue('>', 'RL1001');
+    this.depth--;
     return nodeFor(component, attributes, children, open);
   }
 
@@ -110,16 +162,25 @@ class Parser {
   }
 
   private parseAttribute(): ReactLiteAstAttribute {
+    if (this.checkValue('{') && this.peek(1).value === '.' && this.peek(2).value === '.' && this.peek(3).value === '.') {
+      this.addError('RL_JSX_SPREAD_UNSUPPORTED', 'JSX Spread 属性不受支持。', this.current(), '展开为显式属性。');
+      this.skipBalanced('{', '}');
+      return { name: '__spread__', stringValue: '', booleanValue: false, line: this.current().line, column: this.current().column };
+    }
     let current = this.current(); let name: string = current.value; this.expectKind('identifier', 'RL1005');
     if (!this.checkValue('=')) { return { name: name, stringValue: '', booleanValue: true, line: current.line, column: current.column }; }
     this.index++; if (this.checkKind('string')) {
       let value = this.current(); this.index++; return { name: name, stringValue: value.value, booleanValue: false, line: current.line, column: current.column };
     }
     this.expectValue('{', 'RL1001'); let expression = this.parseExpression(); this.expectValue('}', 'RL1001');
+    if (name === 'style' && expression.kind === 'object') {
+      this.addError('RL_INLINE_STYLE_UNSUPPORTED', 'Inline style 对象不受支持。', current, '使用 className 样式 Token。');
+    }
     return { name: name, value: expression, stringValue: '', booleanValue: false, line: current.line, column: current.column };
   }
 
   private parseExpression(minPrecedence: number = 0): ReactLiteExpression {
+    if (!this.tick('RL_PARSE_BUDGET_EXCEEDED')) { return literalString(''); }
     let left: ReactLiteExpression = this.parseUnary();
     while (this.current().kind === 'operator' && PRECEDENCE[this.current().value] !== undefined && PRECEDENCE[this.current().value] >= minPrecedence) {
       let operator: string = this.current().value; let precedence: number = PRECEDENCE[operator]; this.index++;
@@ -152,12 +213,14 @@ class Parser {
     }
     if (this.checkValue('(') && this.peek(1).value === ')' && this.peek(2).value === '=>') {
       this.index++; this.expectValue(')', 'RL1001'); this.expectValue('=>', 'RL1001');
+      if (this.checkValue('{')) { this.addError('RL_ARROW_BLOCK_UNSUPPORTED', '箭头函数语句块暂不支持。', this.current()); this.skipBalanced('{', '}'); return literalString(''); }
       let body = this.parseExpression();
       return { kind: 'lambda', value: '', operator: '=>', path: [], items: [], properties: [], callee: '', args: [],
         parameter: '', body: body, line: current.line, column: current.column };
     }
     if (this.checkValue('(') && this.peek(1).kind === 'identifier' && this.peek(2).value === ')' && this.peek(3).value === '=>') {
       this.index++; let parameter = this.current().value; this.index++; this.expectValue(')', 'RL1001'); this.expectValue('=>', 'RL1001');
+      if (this.checkValue('{')) { this.addError('RL_ARROW_BLOCK_UNSUPPORTED', '箭头函数语句块暂不支持。', this.current()); this.skipBalanced('{', '}'); return literalString(''); }
       let body = this.parseExpression();
       return { kind: 'lambda', value: '', operator: '=>', path: [], items: [], properties: [], callee: '', args: [],
         parameter: parameter, body: body, line: current.line, column: current.column };
@@ -166,6 +229,7 @@ class Parser {
     if (current.kind === 'identifier') {
       if (this.peek(1).value === '=>') {
         this.index++; this.expectValue('=>', 'RL1001');
+        if (this.checkValue('{')) { this.addError('RL_ARROW_BLOCK_UNSUPPORTED', '箭头函数语句块暂不支持。', this.current()); this.skipBalanced('{', '}'); return literalString(''); }
         let body = this.parseExpression();
         return { kind: 'lambda', value: '', operator: '=>', path: [], items: [], properties: [], callee: '', args: [],
           parameter: current.value, body: body, line: current.line, column: current.column };
@@ -193,15 +257,20 @@ class Parser {
 
   private parseArray(): ReactLiteExpression {
     let current = this.current(); this.index++; let items: ReactLiteExpression[] = [];
-    while (!this.checkValue(']') && !this.checkKind('eof')) { items.push(this.parseExpression()); if (this.checkValue(',')) { this.index++; } else { break; } }
+    while (!this.checkValue(']') && !this.checkKind('eof')) {
+      let startIndex: number = this.index; items.push(this.parseExpression());
+      if (this.checkValue(',')) { this.index++; } else if (this.index === startIndex) { this.recoverToBoundary(); } else { break; }
+    }
     this.expectValue(']', 'RL1001'); return { kind: 'array', value: '', operator: '', path: [], items: items, properties: [], callee: '', args: [], line: current.line, column: current.column };
   }
 
   private parseObject(): ReactLiteExpression {
     let current = this.current(); this.index++; let properties: ReactLiteExpressionProperty[] = [];
     while (!this.checkValue('}') && !this.checkKind('eof')) {
+      let startIndex: number = this.index;
       let key = this.current(); this.index++; let name: string = key.value; this.expectValue(':', 'RL1001');
-      properties.push({ key: name, value: this.parseExpression() }); if (this.checkValue(',')) { this.index++; } else { break; }
+      properties.push({ key: name, value: this.parseExpression() });
+      if (this.checkValue(',')) { this.index++; } else if (this.index === startIndex) { this.recoverToBoundary(); } else { break; }
     }
     this.expectValue('}', 'RL1001'); return { kind: 'object', value: '', operator: '', path: [], items: [], properties: properties, callee: '', args: [], line: current.line, column: current.column };
   }
@@ -215,12 +284,39 @@ class Parser {
   private optional(value: string): void { if (this.checkValue(value)) { this.index++; } }
   private checkValue(value: string): boolean { return this.current().value === value; }
   private checkKind(value: string): boolean { return this.current().kind === value; }
+  private tick(code: string): boolean {
+    this.steps++;
+    if (this.steps > MAX_PARSE_STEPS) {
+      this.addError(code, 'React Lite 解析步骤超过限制。', this.current());
+      this.index = this.tokens.length - 1;
+      return false;
+    }
+    return true;
+  }
+  private recoverToBoundary(): void {
+    if (!this.checkKind('eof')) { this.index++; }
+    while (!this.checkKind('eof') && ['>', '/', '}', ';'].indexOf(this.current().value) < 0) { this.index++; }
+  }
+  private skipBalanced(open: string, close: string): void {
+    let depth: number = 0;
+    while (!this.checkKind('eof') && this.steps <= MAX_PARSE_STEPS) {
+      this.steps++;
+      if (this.current().value === open) { depth++; }
+      if (this.current().value === close) { depth--; }
+      this.index++;
+      if (depth <= 0) { break; }
+    }
+  }
   private current(): ReactLiteToken { return this.tokens[Math.min(this.index, this.tokens.length - 1)]; }
   private peek(offset: number): ReactLiteToken { return this.tokens[Math.min(this.index + offset, this.tokens.length - 1)]; }
   private addError(code: string, message: string, token: ReactLiteToken, suggestion: string = ''): void {
     this.diagnostics.push({ code: code, severity: 'error', message: message, line: token.line, column: token.column,
       length: Math.max(1, token.value.length), suggestion: suggestion });
   }
+}
+
+function parserDiagnostic(code: string, message: string): ReactLiteDiagnostic {
+  return { code: code, severity: 'error', message: message, line: 1, column: 1, length: 1, suggestion: '' };
 }
 
 function nodeFor(component: string, attributes: ReactLiteAstAttribute[], children: ReactLiteAstNode[], token: ReactLiteToken): ReactLiteAstNode {

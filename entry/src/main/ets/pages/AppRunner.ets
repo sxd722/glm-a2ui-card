@@ -513,7 +513,8 @@ struct AppRunner {
       skillId: this.manifest === undefined ? '' : this.manifest.skillId, activeSkillCardId: '', nestedAppId: this.appId,
       activePageId: this.nestedSession.activePageId, skillProgress: 0, statusText: this.statusText,
       errorMessage: this.nestedSession.errorMessage, manifestLength: 0, blueprintLength: 0,
-      dslLength: this.nestedDslText.length };
+      dslLength: this.nestedDslText.length, reactLiteFailureStage: '', reactLiteRawLength: 0,
+      reactLiteNormalizedLength: 0, reactLiteSourceHash: '', reactLiteDiagnosticCodes: '' };
   }
 }
 

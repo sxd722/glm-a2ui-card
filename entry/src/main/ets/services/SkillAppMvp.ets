@@ -9,7 +9,8 @@ import {
   SkillInputField,
   SkillManifest,
   SkillSource,
-  ToolContract
+  ToolContract,
+  ReactLiteFailureArtifact
 } from './SkillAppTypes';
 import { ReactLiteDiagnostic } from './ReactLiteTypes';
 import { UiIrSpec } from './UiIrTypes';
@@ -124,10 +125,23 @@ export function updateDraftUiIrSpec(draft: ForgeDraft, uiSpec: UiIrSpec, source:
   next.reactLiteSource = source;
   next.repairedReactLiteSource = repairedSource;
   next.reactLiteDiagnostics = diagnostics;
+  next.reactLiteFailureArtifact = undefined;
   next.generationMode = 'reactLite';
   next.status = 'preview';
   next.trace = trace;
   next.errorMessage = '';
+  next.updatedAt = Date.now();
+  return next;
+}
+
+export function updateDraftReactLiteFailure(draft: ForgeDraft, artifact: ReactLiteFailureArtifact,
+  trace: string): ForgeDraft {
+  let next: ForgeDraft = cloneDraft(draft);
+  next.reactLiteFailureArtifact = artifact;
+  next.reactLiteDiagnostics = artifact.diagnostics;
+  next.status = 'error';
+  next.trace = trace;
+  next.errorMessage = artifact.errorMessage;
   next.updatedAt = Date.now();
   return next;
 }

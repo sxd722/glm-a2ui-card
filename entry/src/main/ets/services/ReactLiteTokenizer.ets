@@ -1,12 +1,25 @@
 import { ReactLiteDiagnostic, ReactLiteToken, ReactLiteTokenKind } from './ReactLiteTypes';
 
+export const MAX_REACT_LITE_SOURCE_CHARACTERS: number = 300000;
+export const MAX_REACT_LITE_TOKENS: number = 100000;
+
 export interface ReactLiteTokenResult {
   tokens: ReactLiteToken[];
   diagnostics: ReactLiteDiagnostic[];
 }
 
 export function tokenizeReactLite(source: string): ReactLiteTokenResult {
-  return new ReactLiteScanner(stripFence(source)).scan();
+  if (source.length > MAX_REACT_LITE_SOURCE_CHARACTERS) {
+    return { tokens: [{ kind: 'eof', value: '', offset: 0, line: 1, column: 1 }], diagnostics: [
+      scannerDiag('RL_SOURCE_SIZE_LIMIT', 'React Lite 源码超过长度限制。', 1, 1, '缩短模型输出。')
+    ] };
+  }
+  let result: ReactLiteTokenResult = new ReactLiteScanner(stripFence(source)).scan();
+  if (result.tokens.length > MAX_REACT_LITE_TOKENS) {
+    result.tokens = [{ kind: 'eof', value: '', offset: source.length, line: 1, column: 1 }];
+    result.diagnostics.push(scannerDiag('RL_TOKEN_LIMIT', 'React Lite Token 数量超过限制。', 1, 1, '缩短模型输出。'));
+  }
+  return result;
 }
 
 class ReactLiteScanner {
@@ -25,6 +38,10 @@ class ReactLiteScanner {
 
   scan(): ReactLiteTokenResult {
     while (this.index < this.input.length) {
+      if (this.tokens.length >= MAX_REACT_LITE_TOKENS) {
+        this.diagnostics.push(scannerDiag('RL_TOKEN_LIMIT', 'React Lite Token 数量超过限制。', this.line, this.column, '缩短模型输出。'));
+        break;
+      }
       let ch: string = this.input.charAt(this.index);
       if (this.inJsxText && ch !== '<' && ch !== '{') {
         this.scanJsxText();
