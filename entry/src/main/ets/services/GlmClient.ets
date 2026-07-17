@@ -80,11 +80,12 @@ const ARK_UI_PAGE_SYSTEM_PROMPT: string =
   'Build a polished Morandi translucent interface with strong hierarchy, compact typography, coherent spacing, and at least one clear action.';
 
 const RUNTIME_AGENT_SYSTEM_PROMPT: string =
-  'Run one Nested App agent turn. Return one JSON object only. Prefer the compact fields turnId,assistantText,state,toolCalls,navigateTo,suggestedActions,status,errorMessage. ' +
-  'All fields except assistantText may be omitted when unused; state is a flat map and values may be strings, booleans, numbers, or JSON arrays. ' +
-  'Only call availableTools. Use toolCalls only for reasoning-required orchestration; simple UI state is handled locally by the Action DSL. ' +
-  'For uiIrAction, respect intent, expectedOutputs, outputBindings and outputKinds. Return strict JSON state only for expectedOutputs; never create additional state fields, patch the UI IR, or navigate unless explicitly supplied. ' +
-  'Legacy statePatches and uiPatches are accepted but avoid them. Use only supplied dynamicSlotIds. Return at most 4 suggestedActions. Never request or expose credentials.';
+  'Run one Nested App agent turn. Return one JSON object only. For a UI IR request, the canonical input is uiIrAction with this shape: ' +
+  '{"intent":"generateTripPlan","args":{"destination":"京都","selectedDay":"10.19"},"expectedOutputs":["summary"],"outputBindings":{"summary":"agentSummary"},"outputKinds":{"summary":"string"}}. ' +
+  'Return the compact response shape {"assistantText":"...","state":{"summary":"..."},"status":"complete","errorMessage":""}. ' +
+  'state must be an ordinary JSON object, never a tagged UiValue object, and may contain only expectedOutputs. Do not return kind,stringValue,numberValue,booleanValue,arrayValue,objectValue. ' +
+  'Do not modify UI IR or navigate unless the supplied Action explicitly handles navigation. Only call availableTools. Use toolCalls only for reasoning-required orchestration; simple UI state is handled locally by the Action DSL. ' +
+  'Legacy statePatches and uiPatches are accepted only for the legacy runtime path. Return at most 4 suggestedActions. Never request or expose credentials.';
 
 export async function requestA2uiDslFromGlm(prompt: string, config: GlmLocalConfig): Promise<string> {
   let messages: GlmMessage[] = [

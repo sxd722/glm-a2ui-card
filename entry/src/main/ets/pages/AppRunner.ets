@@ -26,11 +26,12 @@ import {
 import {
   applyRuntimeAgentTurn,
   buildRuntimeAgentTurnRequest,
-  normalizeRuntimeAgentTurnResult
+  normalizeRuntimeAgentTurnResult,
+  normalizeUiIrAgentTurnResult
 } from '../services/NestedAgentRuntime';
 import { UiAction, UiEvaluationScope, UiIrNode, UiIrSessionState, UiIrSpec, UiValue, UiValueKind } from '../services/UiIrTypes';
-import { addUiIrAsset, activeUiIrPage, createUiIrSession, reduceUiAction, updateUiBinding } from '../services/UiIrRuntime';
-import { stringValue as uiStringValue, uiValueFromObject, uiValueToDisplayString } from '../services/UiValue';
+import { addUiIrAsset, activeUiIrPage, createUiIrSession, evaluateUiExpression, reduceUiAction, updateUiBinding } from '../services/UiIrRuntime';
+import { stringValue as uiStringValue, uiValueFromObject, uiValueToDisplayString, uiValueToPlainObject, uiRecordToPlainObject } from '../services/UiValue';
 import {
   readInstalledNestedAppById,
   readRunnerSession,
@@ -41,6 +42,7 @@ import {
 import { InstalledSkillApp, RuntimeAgentTurnRequest, RuntimeAgentTurnResult, SkillManifest, UiIrAgentActionPayload, UiIrRunnerSessionSnapshot } from '../services/SkillAppTypes';
 import { pickFileSystemImageAsDataUrl, runTravelTool } from '../services/SkillWorkbench';
 import { TravelInputs } from '../services/SkillTypes';
+import { runTravelReactLiteAcceptance } from '../services/UiIrSelfTest';
 import { HDC_DEBUG_EVENT, HdcDebugCommand, HdcDebugSnapshot, recordHdcDebugResult,
   runningHdcDebugResult, takeNextHdcDebugCommand } from '../services/HdcDebugBridge';
 
@@ -298,7 +300,7 @@ struct AppRunner {
     let reduced = reduceUiAction(this.uiIrSession, action, scope);
     this.uiIrSession = reduced.session;
     if (reduced.effect === undefined) {
-      this.statusText = '本地交互已完成，不调用 GLM。';
+      this.statusText = this.uiIrActionDiagnostic(action, scope);
       await this.persistRunnerState();
       return;
     }
@@ -343,16 +345,18 @@ struct AppRunner {
         let current = readUiStatePath(this.uiIrSession.state, action.resultBindings[expectedOutputs[i]]);
         if (current !== undefined) { outputKinds[expectedOutputs[i]] = current.kind; }
       }
-      let uiIrAction: UiIrAgentActionPayload = { intent: action.intent, args: reduced.effect.args,
+      let plainArgs: Object = uiValueToPlainObject(reduced.effect.args);
+      let uiIrAction: UiIrAgentActionPayload = { intent: action.intent, args: plainArgs,
         expectedOutputs: expectedOutputs, outputBindings: action.resultBindings, outputKinds: outputKinds };
       let request: RuntimeAgentTurnRequest = {
         turnId: 'turn-' + Date.now().toString(), appId: this.appId, skillId: this.manifest.skillId,
         currentPageId: this.uiIrSession.activePageId, actionId: action.id, actionPayload: JSON.stringify(uiIrAction),
         state: uiStateStrings(this.uiIrSession.state), availableTools: this.manifest.toolContracts.filter((tool) => tool.implemented),
-        dynamicSlotIds: [], toolResults: [], uiIrAction: uiIrAction
+        dynamicSlotIds: [], toolResults: [], uiIrAction: uiIrAction,
+        uiIrState: uiRecordToPlainObject(this.uiIrSession.state)
       };
       let raw: string = await requestNestedRuntimeTurnFromGlm(request, { baseUrl: GLM_CODING_ENDPOINT, apiKey: GLM_LOCAL_API_KEY, model: GLM_DEFAULT_MODEL });
-      let result: RuntimeAgentTurnResult = normalizeRuntimeAgentTurnResult(raw);
+      let result: RuntimeAgentTurnResult = normalizeUiIrAgentTurnResult(raw, expectedOutputs, outputKinds);
       let bindingKeys: string[] = Object.keys(action.resultBindings);
       let rejectedPatch: boolean = false;
       let bindingFailed: boolean = false;
@@ -384,6 +388,29 @@ struct AppRunner {
       this.statusText = 'Agent 失败，但已保留当前 UI。';
     }
     await this.persistRunnerState();
+  }
+
+  private uiIrActionDiagnostic(action: UiAction, scope: UiEvaluationScope): string {
+    let selectedDay: string = uiValueToDisplayString(readUiStatePath(this.uiIrSession.state, 'selectedDay'));
+    let message: string = 'UiIR ' + action.kind + '；stateRevision=' + this.uiIrSession.stateRevision.toString() +
+      '；selectedDay=' + selectedDay;
+    if (action.kind === 'list.toggleWhere' || action.kind === 'list.removeWhere' || action.kind === 'list.updateWhere') {
+      let list: UiValue | undefined = readUiStatePath(this.uiIrSession.state, action.path);
+      let expected: UiValue = evaluateUiExpression(action.keyValue, this.uiIrSession, scope);
+      if (list !== undefined && list.kind === 'array') {
+        for (let i: number = 0; i < list.arrayValue.length; i++) {
+          let item: UiValue = list.arrayValue[i];
+          if (item.kind !== 'object') { continue; }
+          let actual: UiValue | undefined = item.objectValue[action.keyField];
+          if (actual !== undefined && JSON.stringify(actual) === JSON.stringify(expected)) {
+            message += '；target=' + uiValueToDisplayString(actual) + ' done=' +
+              uiValueToDisplayString(item.objectValue['done']) + ' liked=' + uiValueToDisplayString(item.objectValue['liked']);
+            break;
+          }
+        }
+      }
+    }
+    return message;
   }
 
   private async runUiIrLocalSteps(steps: UiAction[] | undefined): Promise<void> {
@@ -467,6 +494,10 @@ struct AppRunner {
         await this.runNestedAction(JSON.parse(command.payload) as ArkUiAction);
       } else if (command.action === 'exportCurrentArtifacts') {
         this.showDeveloperDrawer = true;
+      } else if (command.action === 'runTravelReactLiteAcceptance') {
+        let result = runTravelReactLiteAcceptance();
+        this.statusText = result.summary + '：' + result.details.join('；');
+        this.uiIrSession.agentTrace = result.wire;
       } else {
         throw new Error('当前 Runner 不支持调试动作：' + command.action);
       }
