@@ -65,18 +65,20 @@ import {
   localArkUiSpecForManifest,
   localBlueprintForManifest,
   normalizeAppBlueprint,
-  normalizeSkillManifest,
+  normalizeSkillManifestResult,
   updateDraftReactLiteFailure,
   updateDraftUiIrSpec,
   updateDraftBlueprint,
   updateDraftUiSpec,
   updateDraftManifest
 } from '../services/SkillAppMvp';
-import { AppBlueprint, AppBlueprintParseResult, ForgeDraft, RuntimeAgentTurnRequest, RuntimeAgentTurnResult, SkillSource, ToolContract } from '../services/SkillAppTypes';
+import { AppBlueprint, AppBlueprintParseResult, ForgeDraft, RuntimeAgentTurnRequest, RuntimeAgentTurnResult, SkillSource, ToolContract, SkillAnalysisArtifact } from '../services/SkillAppTypes';
+import { loadPublicGithubSkill, RepositorySkillLoadResult } from '../services/RepositorySkillLoader';
 import { forgeReactLite } from '../services/ReactLiteForgeService';
 import { compileReactLiteMapSmoke, compileTodoReactLite, compileTravelReactLite, TRAVEL_REACT_LITE_SOURCE } from '../services/ReactLiteExamples';
 import { ReactLiteCompileResult, compileReactLite } from '../services/ReactLiteCompiler';
 import { runReactLiteCrashCorpus } from '../services/ReactLiteCrashCorpus';
+import { runSkillManifestSelfTest } from '../services/SkillManifestSelfTest';
 import { UiAction, UiIrNode, UiIrSpec } from '../services/UiIrTypes';
 import { runTravelReactLiteAcceptance } from '../services/UiIrSelfTest';
 import { applyRuntimeAgentTurn, buildRuntimeAgentTurnRequest, normalizeRuntimeAgentTurnResult } from '../services/NestedAgentRuntime';
@@ -117,6 +119,7 @@ struct Index {
   @State seniverseApiKey: string = '';
   @State forgeDraft: ForgeDraft = createForgeDraft(createSkillSource('repository', 'https://github.com/seniverse/skills', []));
   @State forgeManifestJson: string = '';
+  @State forgeSkillAnalysisArtifact: string = '';
   @State forgeVisionJson: string = '';
   @State forgeBlueprintJson: string = '';
   @State forgePageJson: string = '';
@@ -360,6 +363,8 @@ struct Index {
         this.ForgeAnalyzeStage()
       } else if (this.forgeStage === 'setup') {
         this.ForgeSetupStage()
+      } else if (this.forgeStage === 'failed') {
+        this.ForgeFailureStage()
       } else {
         this.ForgePreviewStage()
       }
@@ -424,8 +429,11 @@ struct Index {
       if (this.forgeManifestJson.length > 0) {
         this.ForgeArtifactPanel('GLM-5.2 SkillManifest 原始输出', this.forgeManifestJson)
       }
+      if (this.forgeSkillAnalysisArtifact.length > 0) {
+        this.ForgeArtifactPanel('Skill 分析诊断与原始产物', this.forgeSkillAnalysisArtifact)
+      }
       if (this.forgeSourceKind === 'repository') {
-        Text('仓库链接会交给 glm-5.2 分析；仓库内容深度抓取由 RepositoryImporter 后续接入。')
+        Text('仅支持公开 GitHub 仓库；分析前会读取有限深度的 SKILL.md / README.md 正文。')
           .fontSize(11).fontColor('#756E66').width('100%')
       }
       Row({ space: 8 }) {
@@ -484,6 +492,7 @@ struct Index {
       Text('Skill 图片使用 ' + GLM_VISION_MODEL + '，UI Blueprint 使用 ' + GLM_DEFAULT_MODEL + '。')
         .fontSize(11).fontColor('#756E66').width('100%')
       this.ForgeArtifactPanel('当前 SkillManifest', this.forgeManifestJson)
+      this.ForgeArtifactPanel('Skill 分析诊断与原始产物', this.forgeSkillAnalysisArtifact)
       if (this.forgeBlueprintJson.length > 0) {
         this.ForgeArtifactPanel('GLM-5.2 AppBlueprint 原始输出', this.forgeBlueprintJson)
       }
@@ -524,6 +533,26 @@ struct Index {
   }
 
   @Builder
+  ForgeFailureStage() {
+    Column({ space: 12 }) {
+      Text('Skill 分析未完成').fontSize(20).fontWeight(FontWeight.Bold).fontColor('#9A574B').width('100%')
+      Text('本次失败不会替换为旅行或天气模板。请根据诊断修正来源或 API 配置后重试。')
+        .fontSize(13).fontColor('#6B655E').width('100%')
+      this.ForgeArtifactPanel('SkillAnalysisArtifact', this.forgeSkillAnalysisArtifact)
+      if (this.forgeManifestJson.length > 0) {
+        this.ForgeArtifactPanel('GLM 原始 SkillManifest 响应', this.forgeManifestJson)
+      }
+      Text(this.nestedSession.errorMessage).fontSize(12).fontColor('#9A574B').width('100%')
+      Row({ space: 8 }) {
+        Button('返回来源').layoutWeight(1).backgroundColor('#9AADA0')
+          .onClick(() => { this.forgeStage = 'import'; this.nestedSession.errorMessage = ''; })
+        Button('重新分析').layoutWeight(1).backgroundColor('#6D7E73')
+          .onClick(async () => { this.forgeStage = 'import'; await this.analyzeForgeSkill(); })
+      }.width('100%')
+    }.width('100%')
+  }
+
+  @Builder
   ForgePreviewStage() {
     Column({ space: 12 }) {
       Text('4 · 确认预览').fontSize(18).fontWeight(FontWeight.Bold).fontColor('#394840').width('100%')
@@ -536,6 +565,7 @@ struct Index {
           .backgroundColor('#FFFFFF88').borderRadius(10)
       })
       this.ForgeArtifactPanel('SkillManifest', this.forgeManifestJson)
+      this.ForgeArtifactPanel('Skill 分析诊断与原始产物', this.forgeSkillAnalysisArtifact)
       this.ForgeArtifactPanel('GLM-5.2 AppBlueprint', this.forgeBlueprintJson)
       this.ForgeArtifactPanel('GLM 逐页 ArkUiPage 原始输出', this.forgePageJson)
       this.ForgeArtifactPanel('React Lite UI 源码', this.forgeReactLiteSource)
@@ -1387,6 +1417,11 @@ struct Index {
   async analyzeForgeSkill(): Promise<void> {
     let assetIds: string[] = this.forgeAssetIds();
     let sourceValue: string = this.forgeSourceKind === 'repository' ? this.forgeRepositoryUrl : this.forgeSourceValue;
+    let startedAt: number = Date.now();
+    let source: SkillSource = createSkillSource(this.forgeSourceKind, sourceValue, assetIds);
+    let draft: ForgeDraft = createForgeDraft(source);
+    let manifestModel: string = GLM_DEFAULT_MODEL;
+    let manifestEndpoint: string = GLM_CODING_ENDPOINT;
     if (this.apiKey.trim().length === 0) {
       this.nestedSession.errorMessage = 'Skill 分析必须调用 GLM-5.2，请先输入 GLM API Key。';
       return;
@@ -1414,10 +1449,19 @@ struct Index {
     this.forgeBlueprintJson = '';
     this.forgePageJson = '';
     this.nestedDslText = '';
-    let source: SkillSource = createSkillSource(this.forgeSourceKind, sourceValue, assetIds);
-    let draft: ForgeDraft = createForgeDraft(source);
+    this.forgeSkillAnalysisArtifact = '';
     let trace: string = '';
+    let loadedRepository: RepositorySkillLoadResult | undefined = undefined;
     try {
+      if (source.kind === 'repository') {
+        this.statusText = '正在读取公开 GitHub Skill 文件...';
+        loadedRepository = await loadPublicGithubSkill(source.uri);
+        if (!loadedRepository.ok) {
+          throw new Error('[SourceLoadError] ' + loadedRepository.diagnostics.join(' '));
+        }
+        source = createSkillSource('repository', source.uri, assetIds, loadedRepository.textContent);
+        draft = createForgeDraft(source);
+      }
       let manifestSource: SkillSource = source;
       if (source.kind === 'image') {
         let imageDataUrl: string = this.forgePrimaryImageDataUrl();
@@ -1438,19 +1482,59 @@ struct Index {
         model: GLM_DEFAULT_MODEL
       };
       this.forgeManifestJson = await requestSkillManifestFromGlm(manifestSource, glmConfig);
-      let manifest = normalizeSkillManifest(this.forgeManifestJson, draft.manifest);
-      if (manifest === draft.manifest) {
-        throw new Error('glm-5.2 返回内容未通过 SkillManifest 校验');
+      let parseResult = normalizeSkillManifestResult(this.forgeManifestJson, draft.manifest);
+      let parseDiagnostics: string[] = parseResult.diagnostics;
+      let artifact: SkillAnalysisArtifact = {
+        stage: parseResult.ok ? 'complete' : 'manifest-parse',
+        sourceKind: source.kind,
+        sourceLength: manifestSource.textContent.length,
+        model: manifestModel,
+        endpoint: manifestEndpoint,
+        elapsedMs: Date.now() - startedAt,
+        responseLength: this.forgeManifestJson.length,
+        rawResponse: this.forgeManifestJson,
+        extractedJson: parseResult.extractedJson,
+        diagnostics: parseDiagnostics,
+        errorKind: parseResult.ok ? '' : 'ManifestValidationError',
+        errorMessage: parseResult.ok ? '' : parseDiagnostics.join(' ')
+      };
+      this.forgeSkillAnalysisArtifact = JSON.stringify(artifact);
+      draft.skillAnalysisArtifact = artifact;
+      if (!parseResult.ok || parseResult.value === undefined) {
+        throw new Error('[ManifestValidationError] ' + parseDiagnostics.join(' '));
       }
+      let manifest = parseResult.value;
       trace = source.kind === 'image' ?
         '视觉模型完成图片识别，glm-5.2 已生成并校验 SkillManifest。' :
-        'glm-5.2 已根据 ' + (source.kind === 'text' ? 'skill.md' : '仓库来源') + ' 生成并校验 SkillManifest。';
+        'glm-5.2 已根据 ' + (source.kind === 'text' ? 'skill.md' : '仓库文件：' +
+          (loadedRepository === undefined ? '' : loadedRepository.files.join(', '))) + ' 生成并校验 SkillManifest。';
       draft = updateDraftManifest(draft, manifest, trace);
+      draft.skillAnalysisArtifact = artifact;
       this.statusText = 'SkillManifest 生成完成：' + manifest.skillName;
     } catch (error) {
-      let err: BusinessError = error as BusinessError;
-      this.nestedSession.errorMessage = 'Skill 分析失败：' + err.message;
-      this.statusText = '分析已终止；原始产物已保留，不会使用本地旅行模板。';
+      let err: Error = error as Error;
+      let message: string = typeof err.message === 'string' ? err.message : '未知错误';
+      let response: string = this.forgeManifestJson;
+      let artifact: SkillAnalysisArtifact = draft.skillAnalysisArtifact === undefined ? {
+        stage: source.kind === 'repository' && loadedRepository === undefined ? 'source-load' : 'request',
+        sourceKind: source.kind, sourceLength: source.textContent.length, model: manifestModel,
+        endpoint: manifestEndpoint, elapsedMs: Date.now() - startedAt, responseLength: response.length,
+        rawResponse: response, extractedJson: '', diagnostics: [message],
+        errorKind: this.classifySkillAnalysisError(message), errorMessage: message
+      } : draft.skillAnalysisArtifact;
+      artifact.errorKind = artifact.errorKind === '' ? this.classifySkillAnalysisError(message) : artifact.errorKind;
+      artifact.errorMessage = message;
+      artifact.elapsedMs = Date.now() - startedAt;
+      draft.skillAnalysisArtifact = artifact;
+      draft.status = 'error';
+      draft.trace = 'SkillManifest 分析失败，已停止后续生成。';
+      draft.errorMessage = message;
+      this.forgeDraft = draft;
+      this.forgeSkillAnalysisArtifact = JSON.stringify(artifact);
+      this.forgeStage = 'failed';
+      this.nestedSession.errorMessage = 'Skill 分析失败 [' + artifact.errorKind + ']：' + message;
+      this.statusText = response.length > 0 ? '分析已终止；GLM 原始响应已保留。' : '分析已终止；请求未收到 GLM 原始响应。';
+      try { await saveForgeDraft(this.context, draft); } catch (saveError) { }
       return;
     }
     this.forgeDraft = draft;
@@ -1462,6 +1546,22 @@ struct Index {
     } catch (error) {
       this.forgeDraft.trace = this.forgeDraft.trace + ' 草稿持久化失败，但可继续预览。';
     }
+  }
+
+  private classifySkillAnalysisError(message: string): 'SourceLoadError' | 'NetworkError' | 'TimeoutError' |
+    'HttpError' | 'EmptyResponseError' | 'JsonExtractionError' | 'JsonParseError' | 'ManifestValidationError' | 'ConfigError' {
+    if (message.indexOf('[SourceLoadError]') >= 0) { return 'SourceLoadError'; }
+    if (message.indexOf('[TimeoutError]') >= 0 || message.toLowerCase().indexOf('timeout') >= 0) { return 'TimeoutError'; }
+    if (message.indexOf('[HttpError]') >= 0 || message.indexOf('HTTP ') >= 0) { return 'HttpError'; }
+    if (message.indexOf('[EmptyResponseError]') >= 0) { return 'EmptyResponseError'; }
+    if (message.indexOf('JsonExtractionError') >= 0) { return 'JsonExtractionError'; }
+    if (message.indexOf('JsonParseError') >= 0) { return 'JsonParseError'; }
+    if (message.indexOf('[ConfigError]') >= 0) { return 'ConfigError'; }
+    if (message.indexOf('[NetworkError]') >= 0) { return 'NetworkError'; }
+    if (message.indexOf('[ManifestValidationError]') >= 0 || message.indexOf('ManifestValidationError') >= 0) {
+      return 'ManifestValidationError';
+    }
+    return 'NetworkError';
   }
 
   async prepareForgePreview(): Promise<void> {
@@ -1833,6 +1933,7 @@ struct Index {
     this.forgeBlueprintJson = '';
     this.forgePageJson = '';
     this.nestedDslText = '';
+    this.forgeSkillAnalysisArtifact = '';
   }
 
   private async drainHdcDebugCommands(): Promise<void> {
@@ -1966,6 +2067,9 @@ struct Index {
         return;
       case 'inspectReactLiteFailure':
         this.inspectReactLiteFailureFromDebug();
+        return;
+      case 'runSkillManifestSelfTest':
+        this.runSkillManifestSelfTestFromDebug();
         return;
       case 'resetWorkbench':
         this.resetWorkbenchFromDebug();
@@ -2195,6 +2299,7 @@ struct Index {
     this.forgeSkillName = saved.manifest.skillName;
     this.forgeSkillGoal = saved.manifest.description;
     this.forgeManifestJson = JSON.stringify(saved.manifest);
+    this.forgeSkillAnalysisArtifact = saved.skillAnalysisArtifact === undefined ? '' : JSON.stringify(saved.skillAnalysisArtifact);
     this.forgeBlueprintJson = JSON.stringify(saved.blueprint);
     this.forgeReactLiteSource = saved.reactLiteSource === undefined ? '' : saved.reactLiteSource;
     this.forgeReactLiteRepairSource = saved.repairedReactLiteSource === undefined ? '' : saved.repairedReactLiteSource;
@@ -2265,6 +2370,13 @@ struct Index {
     let result = runReactLiteCrashCorpus();
     this.forgeReactLiteDiagnostics = JSON.stringify(result);
     this.statusText = result.passed === result.total ? '[HDC] React Lite crash corpus passed' : '[HDC] React Lite crash corpus failed';
+    if (result.passed !== result.total) { throw new Error(JSON.stringify(result)); }
+  }
+
+  private runSkillManifestSelfTestFromDebug(): void {
+    let result = runSkillManifestSelfTest();
+    this.forgeReactLiteDiagnostics = JSON.stringify(result);
+    this.statusText = result.passed === result.total ? '[HDC] SkillManifest self-test passed' : '[HDC] SkillManifest self-test failed';
     if (result.passed !== result.total) { throw new Error(JSON.stringify(result)); }
   }
 

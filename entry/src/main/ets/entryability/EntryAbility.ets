@@ -52,13 +52,13 @@ export default class EntryAbility extends UIAbility {
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
     hilog.info(DOMAIN, TAG, 'EntryAbility onWindowStageCreate.');
-    windowStage.loadContent('pages/Index', (err) => {
+    windowStage.loadContent('pages/SemanticGalleryPage', (err) => {
       if (err.code) {
-        hilog.error(DOMAIN, TAG, 'Failed to load pages/Index. code=%{public}d message=%{public}s',
+        hilog.error(DOMAIN, TAG, 'Failed to load pages/SemanticGalleryPage. code=%{public}d message=%{public}s',
           err.code, err.message);
         return;
       }
-      hilog.info(DOMAIN, TAG, 'pages/Index loaded.');
+      hilog.info(DOMAIN, TAG, 'pages/SemanticGalleryPage loaded.');
     });
   }
 

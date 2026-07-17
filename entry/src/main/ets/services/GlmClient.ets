@@ -16,8 +16,13 @@ export const GLM_BLUEPRINT_FALLBACK_MODEL: string = 'glm-4.7-flash';
 export const GLM_VISION_MODEL: string = 'glm-4.6v-flash';
 export const GLM_VISION_FALLBACK_MODEL: string = 'glm-4v-flash';
 export const GLM_LOCAL_API_KEY: string = GLM_API_KEY;
+export const SKILL_MANIFEST_TIMEOUT_MS: number = 300000;
+export const SKILL_MANIFEST_MAX_TOKENS: number = 4096;
+export const APP_BLUEPRINT_TIMEOUT_MS: number = 300000;
+export const REACT_LITE_TIMEOUT_MS: number = 600000;
+export const RUNTIME_AGENT_TIMEOUT_MS: number = 120000;
 export const GLM_REQUEST_TIMEOUT_MS: number = 120000;
-export const GLM_VISION_REQUEST_TIMEOUT_MS: number = 120000;
+export const GLM_VISION_REQUEST_TIMEOUT_MS: number = 300000;
 // Keep React Lite on the bounded request path until the on-device crash corpus
 // proves that Network Kit SSE callbacks are safe for this runtime.
 export const REACT_LITE_STREAMING_ENABLED: boolean = false;
@@ -56,6 +61,10 @@ const SKILL_MANIFEST_SYSTEM_PROMPT: string =
   'Analyze a user-provided Skill source and return strict SkillManifest JSON only. No markdown or code. ' +
   'Return schemaVersion,skillId,skillName,version,description,goals,inputFields,outputFields,workflow,decisionPoints,toolContracts,permissions,constraints,examples. ' +
   'inputFields items contain id,label,kind,required,options. toolContracts items contain name,description,adapterId,inputFields,outputFields,allowedOrigins,credentialRef,confirmation,implemented. ' +
+  'CRITICAL SCHEMA RULES FOR MANIFEST: inputFields.options MUST be [] when there are no options; NEVER use null. ' +
+  'outputFields MUST be an array of plain string field IDs, for example ["task_list","next_action"]; NEVER output objects. ' +
+  'toolContracts[].credentialRef MUST be "" when no credential is required; NEVER use null. ' +
+  'toolContracts[].confirmation MUST be a prompt string such as "Are you sure?", or "" when no confirmation is needed; NEVER use boolean true or false. ' +
   'Never include a secret. Mark tools implemented=false unless the source maps to an explicitly registered local adapter.';
 
 const VISUAL_SKILL_MANIFEST_SYSTEM_PROMPT: string = SKILL_MANIFEST_SYSTEM_PROMPT +
@@ -157,7 +166,14 @@ export async function requestSkillManifestFromGlm(source: SkillSource, config: G
     { role: 'system', content: SKILL_MANIFEST_SYSTEM_PROMPT },
     { role: 'user', content: sourcePayload }
   ];
-  return requestChatContent(messages, config, 0.15);
+  let policy: ReactLiteGenerationPolicy = {
+    model: config.model,
+    thinkingDisabled: true,
+    doSample: false,
+    maxTokens: SKILL_MANIFEST_MAX_TOKENS,
+    streaming: false
+  };
+  return requestChatContent(messages, config, 0.15, SKILL_MANIFEST_TIMEOUT_MS, policy, 'SkillManifest');
 }
 
 export async function requestSkillManifestFromGlmImage(imageDataUrl: string, localAssetIds: string[],
@@ -178,7 +194,7 @@ export async function requestSkillManifestFromGlmImage(imageDataUrl: string, loc
     { role: 'system', content: VISUAL_SKILL_MANIFEST_SYSTEM_PROMPT },
     { role: 'user', content: parts }
   ];
-  return requestChatContent(messages, config, 0.1, GLM_VISION_REQUEST_TIMEOUT_MS);
+  return requestChatContent(messages, config, 0.1, GLM_VISION_REQUEST_TIMEOUT_MS, undefined, 'Vision');
 }
 
 export async function requestAppBlueprintFromGlm(manifest: SkillManifest, localAssetIds: string[],
@@ -191,7 +207,7 @@ export async function requestAppBlueprintFromGlm(manifest: SkillManifest, localA
     { role: 'system', content: APP_BLUEPRINT_SYSTEM_PROMPT },
     { role: 'user', content: JSON.stringify(manifestPayload) }
   ];
-  return requestChatContent(messages, config, 0.4, GLM_REQUEST_TIMEOUT_MS);
+  return requestChatContent(messages, config, 0.4, APP_BLUEPRINT_TIMEOUT_MS, undefined, 'AppBlueprint');
 }
 
 export async function requestArkUiPageFromGlm(manifest: SkillManifest, blueprint: AppBlueprint,
@@ -202,7 +218,7 @@ export async function requestArkUiPageFromGlm(manifest: SkillManifest, blueprint
     { role: 'system', content: ARK_UI_PAGE_SYSTEM_PROMPT },
     { role: 'user', content: JSON.stringify(request) }
   ];
-  return requestChatContent(messages, config, 0.35, GLM_REQUEST_TIMEOUT_MS);
+  return requestChatContent(messages, config, 0.35, APP_BLUEPRINT_TIMEOUT_MS, undefined, 'ArkUiPage');
 }
 
 export async function requestReactLiteAppFromGlm(manifest: SkillManifest, blueprint: AppBlueprint,
@@ -215,11 +231,11 @@ export async function requestReactLiteAppFromGlm(manifest: SkillManifest, bluepr
     maxTokens: reactLiteMaxTokens(blueprint), streaming: REACT_LITE_STREAMING_ENABLED };
   let generationConfig: GlmLocalConfig = { baseUrl: config.baseUrl, apiKey: config.apiKey, model: policy.model };
   let source: string = await requestChatContent(messages, generationConfig, 0.2,
-    GLM_REQUEST_TIMEOUT_MS, policy);
+    REACT_LITE_TIMEOUT_MS, policy, 'ReactLite');
   if (LAST_GLM_COMPLETION_METRICS.finishReason === 'length') {
     let retryPolicy: ReactLiteGenerationPolicy = { model: policy.model, thinkingDisabled: true, doSample: false,
       maxTokens: Math.min(12288, Math.ceil(policy.maxTokens * 1.5)), streaming: REACT_LITE_STREAMING_ENABLED };
-    source = await requestChatContent(messages, generationConfig, 0.2, GLM_REQUEST_TIMEOUT_MS, retryPolicy);
+    source = await requestChatContent(messages, generationConfig, 0.2, REACT_LITE_TIMEOUT_MS, retryPolicy, 'ReactLite');
     LAST_GLM_COMPLETION_METRICS.truncatedRetry = true;
   }
   return source;
@@ -235,7 +251,7 @@ export async function requestReactLiteRepairFromGlm(manifest: SkillManifest, blu
   ];
   let policy: ReactLiteGenerationPolicy = { model: config.model, thinkingDisabled: true, doSample: false,
     maxTokens: Math.min(12288, 8192), streaming: false };
-  return requestChatContent(messages, config, 0.15, GLM_REQUEST_TIMEOUT_MS, policy);
+  return requestChatContent(messages, config, 0.15, REACT_LITE_TIMEOUT_MS, policy, 'ReactLiteRepair');
 }
 
 export async function requestNestedRuntimeTurnFromGlm(turn: RuntimeAgentTurnRequest,
@@ -244,7 +260,7 @@ export async function requestNestedRuntimeTurnFromGlm(turn: RuntimeAgentTurnRequ
     { role: 'system', content: RUNTIME_AGENT_SYSTEM_PROMPT },
     { role: 'user', content: JSON.stringify(turn) }
   ];
-  return requestChatContent(messages, config, 0.2);
+  return requestChatContent(messages, config, 0.2, RUNTIME_AGENT_TIMEOUT_MS, undefined, 'RuntimeAgent');
 }
 
 interface AppBlueprintRequest {
@@ -267,7 +283,8 @@ function pageIds(blueprint: AppBlueprint): string[] {
 }
 
 async function requestChatContent(messages: GlmMessage[], config: GlmLocalConfig, temperature: number,
-  readTimeout: number = GLM_REQUEST_TIMEOUT_MS, policy?: ReactLiteGenerationPolicy): Promise<string> {
+  readTimeout: number = GLM_REQUEST_TIMEOUT_MS, policy?: ReactLiteGenerationPolicy,
+  stage: string = 'GLM'): Promise<string> {
   if (policy !== undefined && policy.streaming) {
     try {
       return await requestStreamingChatContent(messages, config, policy, readTimeout);
@@ -276,7 +293,7 @@ async function requestChatContent(messages: GlmMessage[], config: GlmLocalConfig
       if (!isStreamCapabilityError(streamError)) { throw streamError; }
       let fallback: ReactLiteGenerationPolicy = { model: policy.model, thinkingDisabled: policy.thinkingDisabled,
         doSample: policy.doSample, maxTokens: policy.maxTokens, streaming: false };
-      let result: string = await requestChatContent(messages, config, temperature, readTimeout, fallback);
+      let result: string = await requestChatContent(messages, config, temperature, readTimeout, fallback, stage);
       LAST_GLM_COMPLETION_METRICS.streamFallback = true;
       LAST_GLM_COMPLETION_METRICS.streamed = false;
       return result;
@@ -297,15 +314,19 @@ async function requestChatContent(messages: GlmMessage[], config: GlmLocalConfig
   }
 
   try {
+    if (typeof config.baseUrl !== 'string') { throw new Error('[ConfigError] GLM endpoint 类型错误。'); }
+    if (typeof config.apiKey !== 'string') { throw new Error('[ConfigError] GLM API Key 类型错误。'); }
     let requestUrl: string = resolveChatCompletionsUrl(config.baseUrl);
+    let apiKey: string = config.apiKey.trim();
+    if (apiKey.length === 0) { throw new Error('[ConfigError] GLM API Key 为空。'); }
     let extraData: string = JSON.stringify(payload);
     let maxAttempts: number = config.model === GLM_VISION_MODEL ? 4 : 2;
-    let timeoutMs: number = readTimeout > GLM_REQUEST_TIMEOUT_MS ? GLM_REQUEST_TIMEOUT_MS : readTimeout;
+    let timeoutMs: number = readTimeout;
     let deadline: number = Date.now() + timeoutMs;
     for (let attempt: number = 1; attempt <= maxAttempts; attempt++) {
       let remainingMs: number = deadline - Date.now();
       if (remainingMs <= 0) {
-        throw new Error(timeoutMessage(timeoutMs));
+        throw new Error(timeoutMessage(stage, timeoutMs, attempt));
       }
       let response: http.HttpResponse;
       try {
@@ -313,55 +334,58 @@ async function requestChatContent(messages: GlmMessage[], config: GlmLocalConfig
           method: http.RequestMethod.POST,
           header: {
             'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + config.apiKey
+            'Authorization': 'Bearer ' + apiKey
           },
           extraData: extraData,
           expectDataType: http.HttpDataType.STRING,
           connectTimeout: 15000,
           readTimeout: remainingMs
         };
-        let watchdog: number = 0;
-        let watchdogPromise: Promise<http.HttpResponse> = new Promise<http.HttpResponse>((resolve: (value: http.HttpResponse) => void,
-          reject: (error: Error) => void) => {
-          watchdog = setTimeout((): void => {
-            try { client.destroy(); } catch (e) { }
-            reject(new Error(timeoutMessage(timeoutMs)));
-          }, remainingMs);
-        });
-        try {
-          response = await Promise.race([client.request(requestUrl, requestOptions), watchdogPromise]);
-        } finally {
-          if (watchdog !== 0) { clearTimeout(watchdog); }
-        }
+        response = await client.request(requestUrl, requestOptions);
       } catch (error) {
         let err: Error = error as Error;
         let message: string = typeof err.message === 'string' ? err.message.toLowerCase() : '';
         if (Date.now() >= deadline || message.indexOf('timeout') >= 0) {
-          throw new Error(timeoutMessage(timeoutMs));
+          throw new Error(timeoutMessage(stage, timeoutMs, attempt));
         }
-        throw new Error('GLM 请求失败：' + err.message);
+        if (attempt < maxAttempts) {
+          safeDestroyHttp(client);
+          let retryDelay: number = 1500 * attempt * attempt;
+          if (Date.now() + retryDelay >= deadline) {
+            throw new Error(timeoutMessage(stage, timeoutMs, attempt));
+          }
+          await waitForRetry(retryDelay);
+          client = http.createHttp();
+          continue;
+        }
+        throw new Error('[NetworkError] 阶段=' + stage + '，尝试次数=' + attempt.toString() + '：' +
+          redactSecret(errorDetail(err), apiKey));
       }
 
-      let body: string = response.result as string;
+      let body: string = responseBody(response.result);
       if (response.responseCode >= 200 && response.responseCode < 300) {
         if (policy !== undefined) {
           let parsedResult = parseGlmCompletionResult(body, config.model, startedAt, false, false);
           LAST_GLM_COMPLETION_METRICS = parsedResult.metrics;
         }
-        return extractContent(body);
+        let content: string = extractContent(body);
+        if (typeof content !== 'string' || content.trim().length === 0) {
+          throw new Error('[EmptyResponseError] 阶段=' + stage + '，GLM 返回内容为空，尝试次数=' + attempt.toString());
+        }
+        return content;
       }
       if (!isRetryableResponse(response.responseCode) || attempt === maxAttempts) {
-        throw new Error('GLM HTTP ' + response.responseCode.toString() + ': ' + body);
+        throw new Error('[HttpError] 阶段=' + stage + '，HTTP ' + response.responseCode.toString() + '，尝试次数=' + attempt.toString() + '：' + redactSecret(body, apiKey));
       }
       let retryDelay: number = 1500 * attempt * attempt;
       if (Date.now() + retryDelay >= deadline) {
-        throw new Error(timeoutMessage(timeoutMs));
+        throw new Error(timeoutMessage(stage, timeoutMs, attempt));
       }
       await waitForRetry(retryDelay);
     }
-    throw new Error('GLM 请求未完成');
+    throw new Error('[NetworkError] 阶段=' + stage + '，请求未完成。');
   } finally {
-    client.destroy();
+    safeDestroyHttp(client);
   }
 }
 
@@ -437,7 +461,7 @@ async function requestStreamingChatContent(messages: GlmMessage[], config: GlmLo
     }
   };
   let timeoutHandle: number | undefined = setTimeout(() => {
-    settleReject(new Error(timeoutMessage(Math.min(readTimeout, MAX_STREAM_TOTAL_TIMEOUT_MS))));
+    settleReject(new Error(timeoutMessage('ReactLiteStream', Math.min(readTimeout, MAX_STREAM_TOTAL_TIMEOUT_MS), 1)));
   }, Math.min(readTimeout, MAX_STREAM_TOTAL_TIMEOUT_MS));
   try {
     client.on('dataReceive', dataHandler);
@@ -447,7 +471,7 @@ async function requestStreamingChatContent(messages: GlmMessage[], config: GlmLo
       method: http.RequestMethod.POST,
       header: {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + config.apiKey,
+        'Authorization': 'Bearer ' + config.apiKey.trim(),
         'Accept': 'text/event-stream'
       },
       extraData: JSON.stringify(payload),
@@ -497,6 +521,10 @@ function safeStreamCleanup(cleanup: () => void): void {
   try { cleanup(); } catch (error) { }
 }
 
+function safeDestroyHttp(client: http.HttpRequest): void {
+  try { client.destroy(); } catch (error) { }
+}
+
 function isFatalStreamError(error: Error): boolean {
   let message: string = error.message === undefined ? '' : error.message;
   return message.indexOf('GLM_STREAM_HTTP_') === 0 || message.indexOf('GLM_STREAM_SOURCE_LIMIT') === 0 ||
@@ -533,8 +561,23 @@ function isStreamCapabilityError(error: Error): boolean {
   return error.message !== undefined && error.message.indexOf('GLM_STREAM_UNSUPPORTED') === 0;
 }
 
-function timeoutMessage(timeoutMs: number): string {
-  return 'GLM 请求 ' + Math.floor(timeoutMs / 1000).toString() + ' 秒未返回，工作流已终止。';
+function timeoutMessage(stage: string, timeoutMs: number, attempts: number): string {
+  return '[TimeoutError] 阶段=' + stage + '，总超时 ' + Math.floor(timeoutMs / 1000).toString() +
+    ' 秒，已执行尝试次数=' + attempts.toString() + '，GLM 未返回，工作流已终止。';
+}
+
+function redactSecret(message: string, apiKey: string): string {
+  if (apiKey.length === 0) { return message; }
+  return message.replace(apiKey, '[REDACTED]');
+}
+
+function errorDetail(error: Error): string {
+  let message: string = typeof error.message === 'string' ? error.message : '网络请求失败';
+  let stack: string = typeof error.stack === 'string' ? error.stack : '';
+  if (stack.length > 0 && stack !== message) {
+    return message + ' [' + stack.substring(0, 800) + ']';
+  }
+  return message;
 }
 
 function isRetryableResponse(responseCode: number): boolean {
@@ -572,6 +615,15 @@ function extractContent(body: string): string {
     return body;
   }
   return body;
+}
+
+function responseBody(value: Object): string {
+  if (typeof value === 'string') { return value as string; }
+  if (value === undefined || value === null) { return ''; }
+  try {
+    let serialized: string | undefined = JSON.stringify(value);
+    return typeof serialized === 'string' ? serialized : '';
+  } catch (e) { return ''; }
 }
 
 function normalizeDslContent(content: string): string {

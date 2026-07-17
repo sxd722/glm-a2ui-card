@@ -8,6 +8,7 @@ import {
   InstalledSkillApp,
   SkillInputField,
   SkillManifest,
+  SkillManifestParseResult,
   SkillSource,
   ToolContract,
   ReactLiteFailureArtifact
@@ -17,17 +18,18 @@ import { UiIrSpec } from './UiIrTypes';
 
 const SCHEMA_VERSION: string = 'skill-app-mvp-2';
 
-export function createSkillSource(kind: string, value: string, localAssetIds: string[]): SkillSource {
+export function createSkillSource(kind: string, value: string, localAssetIds: string[], loadedText: string = ''): SkillSource {
   let sourceKind: 'image' | 'file' | 'repository' | 'text' = 'text';
   if (kind === 'image' || kind === 'file' || kind === 'repository') { sourceKind = kind; }
+  let textContent: string = sourceKind === 'repository' ? loadedText : value;
   return { id: 'source-' + Date.now().toString(), kind: sourceKind,
     displayName: sourceKind === 'repository' ? '公开 Skill 仓库' : '用户提供的 Skill',
-    uri: sourceKind === 'repository' ? value : '', textContent: sourceKind === 'repository' ? '' : value,
+    uri: sourceKind === 'repository' ? value : '', textContent: textContent,
     localAssetIds: localAssetIds, importedAt: Date.now() };
 }
 
 export function createForgeDraft(source: SkillSource): ForgeDraft {
-  let manifest: SkillManifest = localManifestForSource(source);
+  let manifest: SkillManifest = emptyManifest();
   let blueprint: AppBlueprint = localBlueprintForManifest(manifest);
   return { draftId: 'forge-' + Date.now().toString(), source: source, manifest: manifest, blueprint: blueprint,
     uiSpec: localArkUiSpecForManifest(manifest), status: 'import', trace: 'Skill 来源已就绪，可开始分析。',
@@ -65,13 +67,28 @@ export function localArkUiSpecForManifest(manifest: SkillManifest): ArkUiSpec {
 }
 
 export function normalizeSkillManifest(raw: string, fallback: SkillManifest): SkillManifest {
-  try {
-    let parsed: SkillManifest = JSON.parse(cleanJson(raw)) as SkillManifest;
-    if (parsed !== undefined && parsed !== null && typeof parsed.skillId === 'string' && parsed.skillId.length > 0 &&
-      typeof parsed.skillName === 'string' && parsed.skillName.length > 0) { return sanitizeManifest(parsed, fallback); }
-  } catch (e) {
+  let result: SkillManifestParseResult = normalizeSkillManifestResult(raw, fallback);
+  return result.ok && result.value !== undefined ? result.value : fallback;
+}
+
+export function normalizeSkillManifestResult(raw: string, fallback: SkillManifest): SkillManifestParseResult {
+  let extracted = extractJsonObject(raw);
+  if (!extracted.ok) {
+    return { ok: false, diagnostics: extracted.diagnostics, repairedFields: [], extractedJson: extracted.value };
   }
-  return fallback;
+  let parsed: Object;
+  try {
+    parsed = JSON.parse(extracted.value) as Object;
+  } catch (e) {
+    return { ok: false, diagnostics: ['JsonParseError: SkillManifest JSON 无法解析。'], repairedFields: [], extractedJson: extracted.value };
+  }
+  let diagnostics: string[] = [];
+  let repairedFields: string[] = [];
+  let sanitized: SkillManifest | undefined = sanitizeManifest(parsed, fallback, diagnostics, repairedFields);
+  if (sanitized === undefined) {
+    return { ok: false, diagnostics: diagnostics, repairedFields: repairedFields, extractedJson: extracted.value };
+  }
+  return { ok: true, value: sanitized, diagnostics: diagnostics, repairedFields: repairedFields, extractedJson: extracted.value };
 }
 
 export function normalizeAppBlueprint(raw: string, fallback: AppBlueprint): AppBlueprintParseResult {
@@ -185,29 +202,140 @@ function weatherTools(): ToolContract[] {
     tool('weather.lifeIndex', 'seniverse.weather', false), tool('weather.alert', 'seniverse.weather', false)];
 }
 
-function sanitizeManifest(value: SkillManifest, fallback: SkillManifest): SkillManifest {
-  let m: SkillManifest = JSON.parse(JSON.stringify(value)) as SkillManifest;
-  if (typeof m.schemaVersion !== 'string') { m.schemaVersion = SCHEMA_VERSION; }
-  if (typeof m.version !== 'string') { m.version = '1'; }
-  if (typeof m.description !== 'string') { m.description = ''; }
-  m.goals = strings(m.goals); m.outputFields = strings(m.outputFields); m.workflow = strings(m.workflow);
-  m.decisionPoints = strings(m.decisionPoints); m.permissions = strings(m.permissions); m.constraints = strings(m.constraints);
-  m.examples = strings(m.examples);
-  if (!Array.isArray(m.inputFields)) { m.inputFields = fallback.inputFields; }
-  if (!Array.isArray(m.toolContracts)) { m.toolContracts = []; }
-  for (let i: number = 0; i < m.inputFields.length; i++) {
-    let f: SkillInputField = m.inputFields[i]; if (typeof f.id !== 'string') { f.id = 'field' + i.toString(); }
-    if (typeof f.label !== 'string') { f.label = f.id; } if (typeof f.kind !== 'string') { f.kind = 'text'; }
-    if (typeof f.required !== 'boolean') { f.required = false; } f.options = strings(f.options);
+function emptyManifest(): SkillManifest {
+  return { schemaVersion: SCHEMA_VERSION, skillId: '', skillName: '', version: '', description: '', goals: [],
+    inputFields: [], outputFields: [], workflow: [], decisionPoints: [], toolContracts: [], permissions: [],
+    constraints: [], examples: [] };
+}
+
+function sanitizeManifest(value: Object, fallback: SkillManifest, diagnostics: string[], repairedFields: string[]): SkillManifest | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    diagnostics.push('ManifestValidationError: 根节点必须是 JSON object。');
+    return undefined;
   }
-  for (let j: number = 0; j < m.toolContracts.length; j++) {
-    let t: ToolContract = m.toolContracts[j]; if (typeof t.name !== 'string') { t.name = 'unknown.' + j.toString(); }
-    if (typeof t.description !== 'string') { t.description = ''; } if (typeof t.adapterId !== 'string') { t.adapterId = ''; }
-    t.inputFields = strings(t.inputFields); t.outputFields = strings(t.outputFields); t.allowedOrigins = strings(t.allowedOrigins);
-    if (typeof t.credentialRef !== 'string') { t.credentialRef = ''; } if (typeof t.confirmation !== 'string') { t.confirmation = 'none'; }
-    t.implemented = registeredTool(t.name);
+  let raw: Record<string, Object> = value as Record<string, Object>;
+  let skillIdValue: Object | undefined = raw['skillId'];
+  let skillNameValue: Object | undefined = raw['skillName'];
+  if (typeof skillIdValue !== 'string' || (skillIdValue as string).trim().length === 0) {
+    diagnostics.push('ManifestValidationError: skillId 缺失或为空。');
   }
+  if (typeof skillNameValue !== 'string' || (skillNameValue as string).trim().length === 0) {
+    diagnostics.push('ManifestValidationError: skillName 缺失或为空。');
+  }
+  if (diagnostics.length > 0) { return undefined; }
+
+  let m: SkillManifest = {
+    schemaVersion: stringOr(raw['schemaVersion'], SCHEMA_VERSION, 'schemaVersion', diagnostics, repairedFields),
+    skillId: (skillIdValue as string).trim(), skillName: (skillNameValue as string).trim(),
+    version: stringOr(raw['version'], '1', 'version', diagnostics, repairedFields),
+    description: stringOr(raw['description'], '', 'description', diagnostics, repairedFields),
+    goals: stringArray(raw['goals'], 'goals', diagnostics, repairedFields),
+    inputFields: [], outputFields: stringArray(raw['outputFields'], 'outputFields', diagnostics, repairedFields),
+    workflow: stringArray(raw['workflow'], 'workflow', diagnostics, repairedFields),
+    decisionPoints: stringArray(raw['decisionPoints'], 'decisionPoints', diagnostics, repairedFields),
+    toolContracts: [], permissions: stringArray(raw['permissions'], 'permissions', diagnostics, repairedFields),
+    constraints: stringArray(raw['constraints'], 'constraints', diagnostics, repairedFields),
+    examples: stringArray(raw['examples'], 'examples', diagnostics, repairedFields)
+  };
+  m.inputFields = sanitizeInputFields(raw['inputFields'], diagnostics, repairedFields);
+  m.toolContracts = sanitizeToolContracts(raw['toolContracts'], diagnostics, repairedFields);
   return m;
+}
+
+function sanitizeInputFields(value: Object | undefined, diagnostics: string[], repairedFields: string[]): SkillInputField[] {
+  let result: SkillInputField[] = [];
+  if (value === undefined) {
+    repairedFields.push('inputFields');
+    diagnostics.push('inputFields 缺失，已使用空数组。');
+    return result;
+  }
+  if (!Array.isArray(value)) {
+    diagnostics.push('ManifestValidationError: inputFields 必须是数组。');
+    return result;
+  }
+  for (let i: number = 0; i < value.length; i++) {
+    let item: Object = value[i] as Object;
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+      diagnostics.push('inputFields[' + i.toString() + '] 不是 object，已删除。');
+      repairedFields.push('inputFields[' + i.toString() + ']');
+      continue;
+    }
+    let raw: Record<string, Object> = item as Record<string, Object>;
+    let id: string = stringOr(raw['id'], 'field' + i.toString(), 'inputFields[' + i.toString() + '].id', diagnostics, repairedFields);
+    let label: string = stringOr(raw['label'], id, 'inputFields[' + i.toString() + '].label', diagnostics, repairedFields);
+    let kind: string = stringOr(raw['kind'], 'text', 'inputFields[' + i.toString() + '].kind', diagnostics, repairedFields);
+    let requiredValue: Object | undefined = raw['required'];
+    let required: boolean = typeof requiredValue === 'boolean' ? requiredValue as boolean : false;
+    if (typeof requiredValue !== 'boolean') {
+      diagnostics.push('inputFields[' + i.toString() + '].required 类型错误，已修复为 false。');
+      repairedFields.push('inputFields[' + i.toString() + '].required');
+    }
+    result.push({ id: id, label: label, kind: kind, required: required,
+      options: stringArray(raw['options'], 'inputFields[' + i.toString() + '].options', diagnostics, repairedFields) });
+  }
+  return result;
+}
+
+function sanitizeToolContracts(value: Object | undefined, diagnostics: string[], repairedFields: string[]): ToolContract[] {
+  let result: ToolContract[] = [];
+  if (value === undefined) {
+    repairedFields.push('toolContracts');
+    diagnostics.push('toolContracts 缺失，已使用空数组。');
+    return result;
+  }
+  if (!Array.isArray(value)) {
+    diagnostics.push('ManifestValidationError: toolContracts 必须是数组。');
+    return result;
+  }
+  for (let i: number = 0; i < value.length; i++) {
+    let item: Object = value[i] as Object;
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+      diagnostics.push('toolContracts[' + i.toString() + '] 不是 object，已删除。');
+      repairedFields.push('toolContracts[' + i.toString() + ']');
+      continue;
+    }
+    let raw: Record<string, Object> = item as Record<string, Object>;
+    let name: string = stringOr(raw['name'], 'unknown.' + i.toString(), 'toolContracts[' + i.toString() + '].name', diagnostics, repairedFields);
+    result.push({ name: name,
+      description: stringOr(raw['description'], '', 'toolContracts[' + i.toString() + '].description', diagnostics, repairedFields),
+      adapterId: stringOr(raw['adapterId'], '', 'toolContracts[' + i.toString() + '].adapterId', diagnostics, repairedFields),
+      inputFields: stringArray(raw['inputFields'], 'toolContracts[' + i.toString() + '].inputFields', diagnostics, repairedFields),
+      outputFields: stringArray(raw['outputFields'], 'toolContracts[' + i.toString() + '].outputFields', diagnostics, repairedFields),
+      allowedOrigins: stringArray(raw['allowedOrigins'], 'toolContracts[' + i.toString() + '].allowedOrigins', diagnostics, repairedFields),
+      credentialRef: stringOr(raw['credentialRef'], '', 'toolContracts[' + i.toString() + '].credentialRef', diagnostics, repairedFields),
+      confirmation: stringOr(raw['confirmation'], 'none', 'toolContracts[' + i.toString() + '].confirmation', diagnostics, repairedFields),
+      implemented: registeredTool(name) });
+  }
+  return result;
+}
+
+function stringOr(value: Object | undefined, fallbackValue: string, path: string,
+  diagnostics: string[], repairedFields: string[]): string {
+  if (typeof value === 'string') { return (value as string).trim(); }
+  if (value !== undefined) { diagnostics.push(path + ' 类型错误，已修复。'); }
+  repairedFields.push(path);
+  return fallbackValue;
+}
+
+function stringArray(value: Object | undefined, path: string, diagnostics: string[], repairedFields: string[]): string[] {
+  if (value === undefined) {
+    repairedFields.push(path);
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    diagnostics.push(path + ' 必须是数组，已使用空数组。');
+    repairedFields.push(path);
+    return [];
+  }
+  let out: string[] = [];
+  for (let i: number = 0; i < value.length; i++) {
+    if (typeof value[i] === 'string') { out.push((value[i] as string).trim()); }
+    else {
+      diagnostics.push(path + '[' + i.toString() + '] 不是字符串，已删除。');
+      repairedFields.push(path + '[' + i.toString() + ']');
+    }
+  }
+  return out;
 }
 
 export function sanitizeAppBlueprint(value: AppBlueprint, fallback: AppBlueprint,
@@ -262,10 +390,30 @@ function tool(name: string, adapterId: string, implemented: boolean): ToolContra
 function plan(id: string, title: string, purpose: string, primaryAction: string): AppPagePlan { return { id: id, title: title, purpose: purpose, primaryAction: primaryAction }; }
 function strings(value: string[]): string[] { if (!Array.isArray(value)) { return []; } let out: string[] = []; for (let i: number = 0; i < value.length; i++) { if (typeof value[i] === 'string') { out.push(value[i]); } } return out; }
 function credentialRefs(manifest: SkillManifest): string[] { let refs: string[] = []; for (let i: number = 0; i < manifest.toolContracts.length; i++) { let ref: string = manifest.toolContracts[i].credentialRef; if (ref.length > 0 && refs.indexOf(ref) < 0) { refs.push(ref); } } return refs; }
-function cleanJson(raw: string): string {
-  let cleaned: string = raw.replace('```json', '').replace('```', '').trim();
+
+interface JsonObjectExtractionResult {
+  ok: boolean;
+  value: string;
+  diagnostics: string[];
+}
+
+function extractJsonObject(raw: string): JsonObjectExtractionResult {
+  const MAX_JSON_CHARACTERS: number = 300000;
+  if (raw.length > MAX_JSON_CHARACTERS) {
+    return { ok: false, value: '', diagnostics: ['JsonExtractionError: 模型响应超过 300000 字符上限。'] };
+  }
+  let cleaned: string = raw.trim();
+  if (cleaned.indexOf('```') === 0) {
+    let firstLineEnd: number = cleaned.indexOf('\n');
+    if (firstLineEnd >= 0) { cleaned = cleaned.substring(firstLineEnd + 1); }
+    let fenceEnd: number = cleaned.lastIndexOf('```');
+    if (fenceEnd >= 0) { cleaned = cleaned.substring(0, fenceEnd); }
+    cleaned = cleaned.trim();
+  }
   let start: number = cleaned.indexOf('{');
-  if (start < 0) { return cleaned; }
+  if (start < 0) {
+    return { ok: false, value: '', diagnostics: ['JsonExtractionError: 响应中未找到 JSON object。'] };
+  }
   let depth: number = 0;
   let inString: boolean = false;
   let escaped: boolean = false;
@@ -281,9 +429,20 @@ function cleanJson(raw: string): string {
     else if (current === '{') { depth++; }
     else if (current === '}') {
       depth--;
-      if (depth === 0) { return cleaned.substring(start, i + 1); }
+      if (depth === 0) {
+        let value: string = cleaned.substring(start, i + 1);
+        if (value.length > MAX_JSON_CHARACTERS) {
+          return { ok: false, value: '', diagnostics: ['JsonExtractionError: JSON object 超过长度上限。'] };
+        }
+        return { ok: true, value: value, diagnostics: [] };
+      }
     }
   }
-  return cleaned;
+  return { ok: false, value: cleaned.substring(start), diagnostics: ['JsonExtractionError: JSON object 未闭合。'] };
+}
+
+function cleanJson(raw: string): string {
+  let result: JsonObjectExtractionResult = extractJsonObject(raw);
+  return result.ok ? result.value : raw.trim();
 }
 function cloneDraft(draft: ForgeDraft): ForgeDraft { return JSON.parse(JSON.stringify(draft)) as ForgeDraft; }

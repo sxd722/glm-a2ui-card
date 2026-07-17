@@ -13,7 +13,7 @@ export type HdcDebugAction = 'setForgeSource' | 'runForgeAnalyze' | 'runForgePre
   'resetForgeImageTransfer' | 'appendForgeImageChunk' | 'finishForgeImageTransfer' |
   'exportForgeArtifacts' | 'exportCurrentArtifacts' | 'loadTravelDemo' | 'loadReactLiteDemo' |
   'compileReactLiteSource' | 'runReactLiteSelfTest' | 'runTravelReactLiteAcceptance' | 'runReactLiteCrashCorpus' |
-  'inspectReactLiteFailure' | 'resetWorkbench';
+  'inspectReactLiteFailure' | 'runSkillManifestSelfTest' | 'resetWorkbench';
 export type HdcDebugScope = 'forge' | 'runner' | 'any';
 
 export interface HdcDebugCommand {
@@ -243,7 +243,7 @@ function isHdcDebugAction(value: string): boolean {
     value === 'finishForgeImageTransfer' || value === 'exportForgeArtifacts' || value === 'exportCurrentArtifacts' ||
     value === 'loadTravelDemo' || value === 'loadReactLiteDemo' || value === 'compileReactLiteSource' ||
     value === 'runReactLiteSelfTest' || value === 'runTravelReactLiteAcceptance' || value === 'runReactLiteCrashCorpus' ||
-    value === 'inspectReactLiteFailure' || value === 'resetWorkbench';
+    value === 'inspectReactLiteFailure' || value === 'runSkillManifestSelfTest' || value === 'resetWorkbench';
 }
 
 function debugScope(action: HdcDebugAction): HdcDebugScope {
@@ -258,7 +258,7 @@ function debugScope(action: HdcDebugAction): HdcDebugScope {
     return 'forge';
   }
   if (action === 'loadReactLiteDemo' || action === 'compileReactLiteSource' || action === 'runReactLiteSelfTest' ||
-    action === 'runReactLiteCrashCorpus' || action === 'inspectReactLiteFailure') {
+    action === 'runReactLiteCrashCorpus' || action === 'inspectReactLiteFailure' || action === 'runSkillManifestSelfTest') {
     return 'forge';
   }
   return 'any';

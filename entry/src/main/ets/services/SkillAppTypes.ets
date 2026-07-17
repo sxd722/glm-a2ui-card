@@ -56,6 +56,33 @@ export interface SkillManifest {
   examples: string[];
 }
 
+export interface SkillManifestParseResult {
+  ok: boolean;
+  value?: SkillManifest;
+  diagnostics: string[];
+  repairedFields: string[];
+  extractedJson: string;
+}
+
+export type SkillAnalysisErrorKind = 'SourceLoadError' | 'NetworkError' | 'TimeoutError' |
+  'HttpError' | 'EmptyResponseError' | 'JsonExtractionError' | 'JsonParseError' |
+  'ManifestValidationError' | 'ConfigError';
+
+export interface SkillAnalysisArtifact {
+  stage: string;
+  sourceKind: string;
+  sourceLength: number;
+  model: string;
+  endpoint: string;
+  elapsedMs: number;
+  responseLength: number;
+  rawResponse: string;
+  extractedJson: string;
+  diagnostics: string[];
+  errorKind: SkillAnalysisErrorKind | '';
+  errorMessage: string;
+}
+
 export interface DynamicSlotPolicy {
   id: string;
   pageId: string;
@@ -130,6 +157,7 @@ export interface ForgeDraft {
   repairedReactLiteSource?: string;
   reactLiteDiagnostics?: ReactLiteDiagnostic[];
   reactLiteFailureArtifact?: ReactLiteFailureArtifact;
+  skillAnalysisArtifact?: SkillAnalysisArtifact;
   uiIrSpec?: UiIrSpec;
   generationMode?: 'reactLite' | 'legacyArkUiSpec';
 }
